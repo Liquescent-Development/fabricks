@@ -1,0 +1,36 @@
+# Fabricks CLI
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[package]
+name = "fabricks"
+version = "0.1.0"
+description = "CLI for the Fabricks WASM orchestration platform"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "fabricks"
+path = "src/main.rs"
+
+[dependencies]
+fabricks-common = { path = "../fabricks-common" }
+fabricks-oci = { path = "../fabricks-oci" }
+fabricks-runtime = { path = "../fabricks-runtime" }
+
+clap.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -1,0 +1,38 @@
+# Fabricks OCI Registry Client
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[package]
+name = "fabricks-oci"
+version = "0.1.0"
+description = "OCI registry client for Fabricks WASM modules"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "fabricks_oci"
+path = "src/lib.rs"
+
+[dependencies]
+fabricks-common = { path = "../fabricks-common" }
+
+tokio.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+url.workspace = true
+base64.workspace = true
+sha2.workspace = true
+hex.workspace = true
+bytes.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

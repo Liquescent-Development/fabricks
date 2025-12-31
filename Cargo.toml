@@ -1,0 +1,93 @@
+# Fabricks - Declarative WASM Orchestration Platform
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[workspace]
+resolver = "2"
+members = [
+    "fabricks",
+    "fabricksd",
+    "fabricks-common",
+    "fabricks-oci",
+    "fabricks-runtime",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.91"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/Liquescent-Development/fabricks"
+authors = ["Liquescent Development"]
+
+# =============================================================================
+# Workspace Lints - Strict Mode
+# =============================================================================
+
+[workspace.lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+
+# =============================================================================
+# Shared Dependencies
+# =============================================================================
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.43", features = ["full"] }
+
+# CLI
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# HTTP
+axum = "0.8"
+hyper = { version = "1.6", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["full"] }
+tower-http = { version = "0.6", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# WASM runtime
+wasmtime = "29"
+wasmtime-wasi = "29"
+
+# Database (embedded)
+sled = "0.34"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Utilities
+uuid = { version = "1.11", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+semver = { version = "1.0", features = ["serde"] }
+url = { version = "2.5", features = ["serde"] }
+base64 = "0.22"
+sha2 = "0.10"
+hex = "0.4"
+futures = "0.3"
+bytes = "1.9"
+petgraph = "0.7"
+
+# Testing
+tempfile = "3.15"
