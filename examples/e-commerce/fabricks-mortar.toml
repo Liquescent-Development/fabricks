@@ -1,0 +1,282 @@
+# E-Commerce Platform
+# Complete microservices application
+
+mortar_version = "1.0"
+
+[project]
+name = "e-commerce"
+version = "1.0.0"
+description = "Complete e-commerce platform with microservices"
+
+# =============================================================================
+# Variables
+# =============================================================================
+
+[variable.log_level]
+type = "string"
+default = "info"
+description = "Log level for all services"
+
+[variable.db_pool_size]
+type = "number"
+default = 10
+description = "Database connection pool size"
+
+# =============================================================================
+# Networks
+# =============================================================================
+
+[network.dmz]
+description = "Public-facing gateway"
+ingress = "0.0.0.0/0"
+egress = ["application"]
+
+[network.application]
+description = "Business logic tier"
+internal = true
+ingress = ["dmz"]
+egress = ["data", "cache"]
+
+[network.data]
+description = "Database tier"
+internal = true
+ingress = ["application"]
+
+[network.cache]
+description = "Caching tier"
+internal = true
+ingress = ["application"]
+
+# =============================================================================
+# Services - API Gateway
+# =============================================================================
+
+[service.api-gateway]
+build = "./services/api-gateway"
+networks = ["dmz", "application"]
+ports = ["8080:8080"]
+depends_on = ["product", "cart", "order", "user"]
+
+environment = {
+    LOG_LEVEL = "${variable.log_level}",
+    PRODUCT_SERVICE = "http://product:8081",
+    CART_SERVICE = "http://cart:8082",
+    ORDER_SERVICE = "http://order:8083",
+    USER_SERVICE = "http://user:8084"
+}
+
+[service.api-gateway.replicas]
+min = 2
+max = 20
+cpu_threshold = 60
+
+[service.api-gateway.resources]
+memory = "256Mi"
+cpu = 0.5
+
+[service.api-gateway.health_check.http]
+path = "/health"
+interval = "10s"
+
+# =============================================================================
+# Services - Product Service
+# =============================================================================
+
+[service.product]
+build = "./services/product"
+networks = ["application", "data", "cache"]
+depends_on = ["postgres", "redis"]
+
+environment = {
+    DATABASE_URL = "postgres://app:secret@postgres:5432/products?pool_size=${variable.db_pool_size}",
+    REDIS_URL = "redis://redis:6379/0",
+    LOG_LEVEL = "${variable.log_level}"
+}
+
+[service.product.exports]
+interfaces = ["ecommerce:product/catalog@1.0.0"]
+
+[service.product.replicas]
+min = 2
+max = 10
+cpu_threshold = 70
+
+[service.product.resources]
+memory = "256Mi"
+cpu = 0.5
+
+[service.product.health_check.http]
+path = "/health"
+port = 8081
+interval = "30s"
+
+# =============================================================================
+# Services - Cart Service
+# =============================================================================
+
+[service.cart]
+build = "./services/cart"
+networks = ["application", "cache"]
+depends_on = ["redis"]
+
+environment = {
+    REDIS_URL = "redis://redis:6379/1",
+    LOG_LEVEL = "${variable.log_level}"
+}
+
+[service.cart.imports]
+product = { service = "product", interface = "ecommerce:product/catalog@1.0.0" }
+
+[service.cart.exports]
+interfaces = ["ecommerce:cart/service@1.0.0"]
+
+[service.cart.replicas]
+min = 2
+max = 10
+cpu_threshold = 70
+
+[service.cart.resources]
+memory = "256Mi"
+cpu = 0.5
+
+[service.cart.health_check.http]
+path = "/health"
+port = 8082
+interval = "30s"
+
+# =============================================================================
+# Services - Order Service
+# =============================================================================
+
+[service.order]
+build = "./services/order"
+networks = ["application", "data"]
+depends_on = ["postgres", "cart", "user", "product"]
+
+environment = {
+    DATABASE_URL = "postgres://app:secret@postgres:5432/orders?pool_size=${variable.db_pool_size}",
+    LOG_LEVEL = "${variable.log_level}"
+}
+
+[service.order.imports]
+cart = { service = "cart", interface = "ecommerce:cart/service@1.0.0" }
+user = { service = "user", interface = "ecommerce:user/service@1.0.0" }
+product = { service = "product", interface = "ecommerce:product/catalog@1.0.0" }
+
+[service.order.exports]
+interfaces = ["ecommerce:order/service@1.0.0"]
+
+[service.order.replicas]
+min = 2
+max = 10
+cpu_threshold = 70
+
+[service.order.resources]
+memory = "256Mi"
+cpu = 0.5
+
+[service.order.health_check.http]
+path = "/health"
+port = 8083
+interval = "30s"
+
+# =============================================================================
+# Services - User Service
+# =============================================================================
+
+[service.user]
+build = "./services/user"
+networks = ["application", "data"]
+depends_on = ["postgres"]
+
+environment = {
+    DATABASE_URL = "postgres://app:secret@postgres:5432/users?pool_size=${variable.db_pool_size}",
+    LOG_LEVEL = "${variable.log_level}"
+}
+
+[service.user.exports]
+interfaces = ["ecommerce:user/service@1.0.0"]
+
+[service.user.replicas]
+min = 2
+max = 5
+cpu_threshold = 70
+
+[service.user.resources]
+memory = "256Mi"
+cpu = 0.5
+
+[service.user.health_check.http]
+path = "/health"
+port = 8084
+interval = "30s"
+
+# =============================================================================
+# Services - PostgreSQL
+# =============================================================================
+
+[service.postgres]
+image = "wasm://pglite:latest"
+networks = ["data"]
+
+environment = {
+    POSTGRES_USER = "app",
+    POSTGRES_PASSWORD = "secret"
+}
+
+[service.postgres.volumes]
+postgres_data = "/var/lib/postgresql/data"
+
+[service.postgres.replicas]
+min = 1
+max = 1
+
+[service.postgres.resources]
+memory = "1Gi"
+cpu = 2.0
+
+[service.postgres.health_check.tcp]
+port = 5432
+interval = "10s"
+
+# =============================================================================
+# Services - Redis
+# =============================================================================
+
+[service.redis]
+image = "wasm://redis:7.2"
+networks = ["cache"]
+
+[service.redis.volumes]
+redis_data = "/data"
+
+[service.redis.replicas]
+min = 2
+max = 2
+
+[service.redis.resources]
+memory = "256Mi"
+cpu = 0.5
+
+[service.redis.health_check.tcp]
+port = 6379
+interval = "10s"
+
+# =============================================================================
+# Volumes
+# =============================================================================
+
+[volume.postgres_data]
+size = "50Gi"
+
+[volume.redis_data]
+size = "5Gi"
+
+# =============================================================================
+# Validation
+# =============================================================================
+
+[validate]
+require_health_checks = true
+deny_wildcard_connect = true
+check_circular_dependencies = true

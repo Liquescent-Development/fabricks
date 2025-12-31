@@ -1,0 +1,46 @@
+# Alertmanager Configuration
+
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'default-receiver'
+
+  routes:
+    # Critical alerts go to PagerDuty
+    - match:
+        severity: critical
+      receiver: 'pagerduty-critical'
+      continue: true
+
+    # Warning alerts go to Slack
+    - match:
+        severity: warning
+      receiver: 'slack-warnings'
+
+receivers:
+  - name: 'default-receiver'
+    # Default: just log
+
+  - name: 'pagerduty-critical'
+    pagerduty_configs:
+      - service_key: '<your-pagerduty-service-key>'
+        severity: critical
+
+  - name: 'slack-warnings'
+    slack_configs:
+      - api_url: '<your-slack-webhook-url>'
+        channel: '#alerts'
+        title: '{{ .CommonAnnotations.summary }}'
+        text: '{{ .CommonAnnotations.description }}'
+
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'service']

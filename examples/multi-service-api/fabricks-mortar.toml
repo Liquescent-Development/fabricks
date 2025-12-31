@@ -1,0 +1,102 @@
+# Multi-Service API Example
+# A REST API with PostgreSQL database
+
+mortar_version = "1.0"
+
+[project]
+name = "multi-service-api"
+version = "1.0.0"
+description = "REST API with PostgreSQL database"
+
+# =============================================================================
+# Variables
+# =============================================================================
+
+[variable.log_level]
+type = "string"
+default = "info"
+description = "Log level for services"
+
+# =============================================================================
+# Networks
+# =============================================================================
+
+[network.public]
+description = "Public-facing API"
+ingress = "0.0.0.0/0"
+egress = ["data"]
+
+[network.data]
+description = "Database tier"
+internal = true
+ingress = ["public"]
+
+# =============================================================================
+# Services
+# =============================================================================
+
+[service.api]
+build = "./services/api"
+networks = ["public", "data"]
+ports = ["8080:8080"]
+depends_on = ["postgres"]
+
+environment = {
+    DATABASE_URL = "postgres://app:secret@postgres:5432/api",
+    LOG_LEVEL = "${variable.log_level}"
+}
+
+[service.api.resources]
+memory = "256Mi"
+cpu = 0.5
+
+[service.api.replicas]
+min = 1
+max = 5
+cpu_threshold = 70
+
+[service.api.health_check.http]
+path = "/health"
+interval = "30s"
+
+# -----------------------------------------------------------------------------
+
+[service.postgres]
+image = "wasm://pglite:latest"
+networks = ["data"]
+
+environment = {
+    POSTGRES_DB = "api",
+    POSTGRES_USER = "app",
+    POSTGRES_PASSWORD = "secret"
+}
+
+[service.postgres.volumes]
+postgres_data = "/var/lib/postgresql/data"
+
+[service.postgres.resources]
+memory = "512Mi"
+cpu = 1.0
+
+[service.postgres.replicas]
+min = 1
+max = 1
+
+[service.postgres.health_check.tcp]
+port = 5432
+interval = "10s"
+
+# =============================================================================
+# Volumes
+# =============================================================================
+
+[volume.postgres_data]
+size = "10Gi"
+
+# =============================================================================
+# Validation
+# =============================================================================
+
+[validate]
+require_health_checks = true
+deny_wildcard_connect = true

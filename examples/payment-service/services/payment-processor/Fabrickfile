@@ -1,0 +1,46 @@
+# Payment Processor Service
+# PCI-DSS compliant payment processing (isolated zone)
+
+fabrick_version = "1.0"
+
+[info]
+name = "payment-processor"
+version = "1.0.0"
+description = "PCI-DSS compliant payment processor"
+
+[from]
+source = "rust"
+
+[source]
+path = "."
+
+[build]
+command = "cargo build --target wasm32-wasi --release"
+output = "target/wasm32-wasi/release/payment_processor.wasm"
+
+exports = ["charge", "refund", "verify_webhook"]
+
+[capabilities]
+# Only required environment variables
+env = ["STRIPE_API_KEY", "STRIPE_WEBHOOK_SECRET", "LOG_LEVEL"]
+
+[capabilities.network]
+listen = [9000]
+# Only connect to approved payment gateway
+connect = ["api.stripe.com:443"]
+
+# No filesystem access - stateless processing
+# [capabilities.filesystem]
+
+[health_check.http]
+path = "/health"
+port = 9000
+interval = "10s"
+
+[security]
+read_only_root = true
+deny_by_default = true
+
+[config.resources]
+memory = "512Mi"
+cpu = 1.0

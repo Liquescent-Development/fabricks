@@ -1,0 +1,40 @@
+# Cart Service
+# Shopping cart management
+
+fabrick_version = "1.0"
+
+[info]
+name = "cart"
+version = "1.0.0"
+description = "Shopping cart service"
+
+[from]
+source = "rust"
+
+[source]
+path = "."
+
+[build]
+command = "cargo build --target wasm32-wasi --release"
+output = "target/wasm32-wasi/release/cart.wasm"
+
+exports = ["get_cart", "add_item", "remove_item", "clear_cart"]
+
+[imports]
+product = "wasm://product:1.0.0"
+
+[capabilities]
+env = ["REDIS_URL", "LOG_LEVEL"]
+
+[capabilities.network]
+listen = [8082]
+connect = ["redis:6379"]
+
+[health_check.http]
+path = "/health"
+port = 8082
+interval = "30s"
+
+[config.resources]
+memory = "256Mi"
+cpu = 0.5

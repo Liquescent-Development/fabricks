@@ -1,0 +1,40 @@
+# Payment Gateway Service
+# Validates and routes payment requests to isolated processor
+
+fabrick_version = "1.0"
+
+[info]
+name = "payment-gateway"
+version = "1.0.0"
+description = "Payment gateway - validates and routes payment requests"
+
+[from]
+source = "rust"
+
+[source]
+path = "."
+
+[build]
+command = "cargo build --target wasm32-wasi --release"
+output = "target/wasm32-wasi/release/payment_gateway.wasm"
+
+exports = ["process_payment", "refund_payment", "get_payment_status"]
+
+[capabilities]
+env = ["LOG_LEVEL", "PROCESSOR_ENDPOINT"]
+
+[capabilities.network]
+listen = [8090]
+connect = ["payment-processor:9000"]
+
+[health_check.http]
+path = "/health"
+port = 8090
+interval = "10s"
+
+[security]
+tls_required = true
+
+[config.resources]
+memory = "256Mi"
+cpu = 0.5

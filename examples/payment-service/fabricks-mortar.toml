@@ -1,0 +1,164 @@
+# PCI-Compliant Payment Service
+# Isolated payment processing with audit logging
+
+mortar_version = "1.0"
+
+[project]
+name = "payment-service"
+version = "1.0.0"
+description = "PCI-DSS compliant payment processing"
+
+# =============================================================================
+# Secrets (from Vault)
+# =============================================================================
+
+[secret.stripe_api_key]
+provider = "vault"
+path = "secret/data/stripe"
+key = "api_key"
+
+[secret.stripe_webhook_secret]
+provider = "vault"
+path = "secret/data/stripe"
+key = "webhook_secret"
+
+# =============================================================================
+# External Hosts (Whitelist)
+# =============================================================================
+
+[external_hosts.payment-gateways]
+description = "Approved payment processors"
+hosts = [
+    "api.stripe.com:443",
+    "api.braintreegateway.com:443"
+]
+tls_required = true
+
+# =============================================================================
+# Networks
+# =============================================================================
+
+[network.application]
+description = "Application services"
+internal = true
+egress = ["payment-bridge"]
+
+[network.payment-bridge]
+description = "Bridge to payment zone"
+internal = true
+ingress = ["application"]
+egress = ["payment"]
+
+[network.payment]
+description = "PCI-DSS compliant payment zone"
+isolated = true
+audit_all = true
+encryption = "required"
+ingress = ["payment-bridge"]
+egress = ["external:payment-gateways"]
+
+# =============================================================================
+# Services - Payment Gateway (Bridge)
+# =============================================================================
+
+[service.payment-gateway]
+build = "./services/payment-gateway"
+networks = ["payment-bridge", "payment"]
+
+environment = {
+    LOG_LEVEL = "info",
+    PROCESSOR_ENDPOINT = "http://payment-processor:9000"
+}
+
+[service.payment-gateway.replicas]
+min = 2
+max = 5
+cpu_threshold = 70
+
+[service.payment-gateway.resources]
+memory = "256Mi"
+cpu = 0.5
+
+[service.payment-gateway.health_check.http]
+path = "/health"
+port = 8090
+interval = "10s"
+
+[service.payment-gateway.security]
+tls_required = true
+
+# =============================================================================
+# Services - Payment Processor (Isolated)
+# =============================================================================
+
+[service.payment-processor]
+build = "./services/payment-processor"
+networks = ["payment"]
+
+environment = {
+    STRIPE_API_KEY = "${secret.stripe_api_key}",
+    STRIPE_WEBHOOK_SECRET = "${secret.stripe_webhook_secret}",
+    LOG_LEVEL = "info"
+}
+
+# Fixed replicas - no autoscaling in PCI zone
+[service.payment-processor.replicas]
+min = 3
+max = 3
+
+[service.payment-processor.resources]
+memory = "512Mi"
+cpu = 1.0
+
+[service.payment-processor.health_check.http]
+path = "/health"
+port = 9000
+interval = "10s"
+
+# Security hardening
+[service.payment-processor.security]
+egress_locked = true
+secrets_encrypted = true
+tls_required = true
+read_only_root = true
+
+# Audit logging
+[service.payment-processor.audit]
+enabled = true
+log_level = "verbose"
+pii_redact = true
+
+# =============================================================================
+# Policies
+# =============================================================================
+
+[policy.pci_compliance]
+description = "Enforce PCI-DSS requirements"
+
+# Deny payment zone from reaching monitoring (PCI data isolation)
+[[policy.pci_compliance.deny]]
+from = ["payment"]
+to = ["monitoring"]
+reason = "PCI data must not be logged to general monitoring"
+
+# Payment zone can only reach approved external gateways
+[[policy.pci_compliance.deny]]
+from = ["payment"]
+to = ["external:*"]
+except = ["external:payment-gateways"]
+reason = "Payment zone can only reach approved gateways"
+
+# Require TLS and audit for payment network
+[[policy.pci_compliance.require]]
+networks = ["payment"]
+tls = true
+audit = true
+
+# =============================================================================
+# Validation
+# =============================================================================
+
+[validate]
+require_health_checks = true
+deny_wildcard_connect = true
+require_explicit_capabilities = true

@@ -1,0 +1,152 @@
+# Monitoring Stack
+# Prometheus + Grafana for observability
+
+mortar_version = "1.0"
+
+[project]
+name = "monitoring"
+version = "1.0.0"
+description = "Observability stack with Prometheus and Grafana"
+
+# =============================================================================
+# Secrets
+# =============================================================================
+
+[secret.grafana_admin_password]
+provider = "env"
+key = "GRAFANA_ADMIN_PASSWORD"
+
+# =============================================================================
+# Networks
+# =============================================================================
+
+[network.monitoring]
+description = "Observability services"
+ingress = ["*"]           # All networks can send metrics
+ingress_only = true       # Cannot initiate outbound connections
+egress = ["external:observability"]
+
+[external_hosts.observability]
+description = "External observability endpoints"
+hosts = [
+    "api.pagerduty.com:443",
+    "events.pagerduty.com:443"
+]
+tls_required = true
+
+# =============================================================================
+# Services - Prometheus
+# =============================================================================
+
+[service.prometheus]
+image = "wasm://prometheus:v2.50"
+networks = ["monitoring"]
+ports = ["9090:9090"]
+
+environment = {
+    PROMETHEUS_RETENTION_TIME = "15d"
+}
+
+[service.prometheus.files]
+"./config/prometheus.yml" = "/etc/prometheus/prometheus.yml"
+
+[service.prometheus.volumes]
+prometheus_data = "/prometheus"
+
+[service.prometheus.replicas]
+min = 1
+max = 1
+
+[service.prometheus.resources]
+memory = "2Gi"
+cpu = 1.0
+
+[service.prometheus.health_check.http]
+path = "/-/healthy"
+port = 9090
+interval = "30s"
+
+# =============================================================================
+# Services - Grafana
+# =============================================================================
+
+[service.grafana]
+image = "wasm://grafana:10"
+networks = ["monitoring"]
+ports = ["3000:3000"]
+depends_on = ["prometheus"]
+
+environment = {
+    GF_SECURITY_ADMIN_USER = "admin",
+    GF_SECURITY_ADMIN_PASSWORD = "${secret.grafana_admin_password}",
+    GF_USERS_ALLOW_SIGN_UP = "false",
+    GF_SERVER_ROOT_URL = "http://localhost:3000"
+}
+
+[service.grafana.files]
+"./config/grafana/provisioning/" = "/etc/grafana/provisioning/"
+
+[service.grafana.volumes]
+grafana_data = "/var/lib/grafana"
+
+[service.grafana.replicas]
+min = 1
+max = 1
+
+[service.grafana.resources]
+memory = "512Mi"
+cpu = 0.5
+
+[service.grafana.health_check.http]
+path = "/api/health"
+port = 3000
+interval = "30s"
+
+# =============================================================================
+# Services - Alertmanager (Optional)
+# =============================================================================
+
+[service.alertmanager]
+image = "wasm://alertmanager:v0.27"
+networks = ["monitoring"]
+ports = ["9093:9093"]
+depends_on = ["prometheus"]
+
+[service.alertmanager.files]
+"./config/alertmanager.yml" = "/etc/alertmanager/alertmanager.yml"
+
+[service.alertmanager.volumes]
+alertmanager_data = "/alertmanager"
+
+[service.alertmanager.replicas]
+min = 1
+max = 1
+
+[service.alertmanager.resources]
+memory = "256Mi"
+cpu = 0.25
+
+[service.alertmanager.health_check.http]
+path = "/-/healthy"
+port = 9093
+interval = "30s"
+
+# =============================================================================
+# Volumes
+# =============================================================================
+
+[volume.prometheus_data]
+size = "50Gi"
+
+[volume.grafana_data]
+size = "5Gi"
+
+[volume.alertmanager_data]
+size = "1Gi"
+
+# =============================================================================
+# Validation
+# =============================================================================
+
+[validate]
+require_health_checks = true
