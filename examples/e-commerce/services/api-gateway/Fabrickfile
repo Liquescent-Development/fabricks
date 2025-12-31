@@ -1,0 +1,35 @@
+# API Gateway Service
+# Routes requests to backend services
+
+fabrick_version = "1.0"
+
+[info]
+name = "api-gateway"
+version = "1.0.0"
+description = "API gateway for e-commerce platform"
+
+[from]
+source = "rust"
+
+[source]
+path = "."
+
+[build]
+command = "cargo build --target wasm32-wasi --release"
+output = "target/wasm32-wasi/release/api_gateway.wasm"
+
+[capabilities]
+env = ["LOG_LEVEL", "PRODUCT_SERVICE", "CART_SERVICE", "ORDER_SERVICE", "USER_SERVICE"]
+
+[capabilities.network]
+listen = [8080]
+connect = ["product:8081", "cart:8082", "order:8083", "user:8084"]
+
+[health_check.http]
+path = "/health"
+port = 8080
+interval = "10s"
+
+[config.resources]
+memory = "256Mi"
+cpu = 0.5

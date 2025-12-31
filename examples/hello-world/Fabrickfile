@@ -1,0 +1,26 @@
+# Hello World Example
+# The simplest possible Fabrickfile - a minimal WASM service
+
+fabrick_version = "1.0"
+
+[info]
+name = "hello-world"
+version = "1.0.0"
+description = "A minimal Hello World fabrick"
+
+[from]
+source = "rust"
+
+[source]
+path = "."
+
+[build]
+command = "cargo build --target wasm32-wasi --release"
+output = "target/wasm32-wasi/release/hello_world.wasm"
+
+[capabilities.network]
+listen = [8080]
+
+[health_check.http]
+path = "/health"
+interval = "30s"

@@ -1,0 +1,42 @@
+# Order Service
+# Order processing and management
+
+fabrick_version = "1.0"
+
+[info]
+name = "order"
+version = "1.0.0"
+description = "Order processing service"
+
+[from]
+source = "rust"
+
+[source]
+path = "."
+
+[build]
+command = "cargo build --target wasm32-wasi --release"
+output = "target/wasm32-wasi/release/order.wasm"
+
+exports = ["create_order", "get_order", "list_orders", "cancel_order"]
+
+[imports]
+cart = "wasm://cart:1.0.0"
+user = "wasm://user:1.0.0"
+product = "wasm://product:1.0.0"
+
+[capabilities]
+env = ["DATABASE_URL", "LOG_LEVEL"]
+
+[capabilities.network]
+listen = [8083]
+connect = ["postgres:5432"]
+
+[health_check.http]
+path = "/health"
+port = 8083
+interval = "30s"
+
+[config.resources]
+memory = "256Mi"
+cpu = 0.5
