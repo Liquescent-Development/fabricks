@@ -3,8 +3,8 @@
 use std::collections::HashSet;
 
 use crate::error::ValidationError;
-use crate::models::fabrickfile::{Fabrickfile, From, FABRICK_VERSION};
-use crate::models::mortar::{MortarFile, Service, MORTAR_VERSION};
+use crate::models::fabrickfile::{FABRICK_VERSION, Fabrickfile, From};
+use crate::models::mortar::{MORTAR_VERSION, MortarFile, Service};
 
 /// Trait for types that can be validated.
 pub trait Validate {
@@ -71,10 +71,12 @@ fn validate_host_port(value: &str) -> Result<(), ValidationError> {
     }
 
     let port_str = parts[0];
-    let port: u32 = port_str.parse().map_err(|_| ValidationError::InvalidHostPort {
-        value: value.to_string(),
-        reason: format!("invalid port number: {port_str}"),
-    })?;
+    let port: u32 = port_str
+        .parse()
+        .map_err(|_| ValidationError::InvalidHostPort {
+            value: value.to_string(),
+            reason: format!("invalid port number: {port_str}"),
+        })?;
 
     validate_port(port).map_err(|_| ValidationError::InvalidHostPort {
         value: value.to_string(),
@@ -167,7 +169,11 @@ fn validate_url(url: &str) -> Result<(), ValidationError> {
 }
 
 fn validate_from(from: &From) -> Result<(), ValidationError> {
-    let specified = [from.source.is_some(), from.image.is_some(), from.path.is_some()];
+    let specified = [
+        from.source.is_some(),
+        from.image.is_some(),
+        from.path.is_some(),
+    ];
     let count = specified.iter().filter(|&&x| x).count();
 
     if count > 1 {
@@ -223,7 +229,9 @@ impl Validate for MortarFile {
 
         // Validate each service
         for (name, service) in &self.service {
-            if let Err(e) = validate_service(name, service, &network_names, &volume_names, &service_names) {
+            if let Err(e) =
+                validate_service(name, service, &network_names, &volume_names, &service_names)
+            {
                 match e {
                     ValidationError::Multiple(mut sub_errors) => errors.append(&mut sub_errors),
                     e => errors.push(e),
