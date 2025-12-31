@@ -662,7 +662,12 @@ mod tests {
         assert_eq!(mortar.mortar_version, "1.0");
         assert_eq!(mortar.project.name, "my-app");
         assert!(mortar.service.contains_key("api"));
-        assert!(mortar.network.as_ref().is_some_and(|n| n.contains_key("default")));
+        assert!(
+            mortar
+                .network
+                .as_ref()
+                .is_some_and(|n| n.contains_key("default"))
+        );
         Ok(())
     }
 
@@ -695,7 +700,12 @@ mod tests {
         let postgres = mortar.service.get("postgres");
         assert!(postgres.is_some());
         let postgres = postgres.unwrap_or_else(|| unreachable!());
-        assert!(postgres.volumes.as_ref().is_some_and(|v| v.contains_key("postgres_data")));
+        assert!(
+            postgres
+                .volumes
+                .as_ref()
+                .is_some_and(|v| v.contains_key("postgres_data"))
+        );
 
         // Verify volume exists with expected properties
         let volume = mortar.volume.as_ref().and_then(|v| v.get("postgres_data"));

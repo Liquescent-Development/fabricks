@@ -51,9 +51,11 @@ impl FromStr for Duration {
             .find(|c: char| !c.is_ascii_digit())
             .map_or((s, ""), |i| s.split_at(i));
 
-        let num: u64 = num_str.parse().map_err(|_| ValidationError::InvalidDuration {
-            value: s.to_string(),
-        })?;
+        let num: u64 = num_str
+            .parse()
+            .map_err(|_| ValidationError::InvalidDuration {
+                value: s.to_string(),
+            })?;
 
         let multiplier = match unit {
             "s" | "sec" | "second" | "seconds" | "" => 1,
@@ -63,7 +65,7 @@ impl FromStr for Duration {
             _ => {
                 return Err(ValidationError::InvalidDuration {
                     value: s.to_string(),
-                })
+                });
             }
         };
 
@@ -159,9 +161,11 @@ impl FromStr for ByteSize {
             .find(|c: char| !c.is_ascii_digit())
             .map_or((s, ""), |i| s.split_at(i));
 
-        let num: u64 = num_str.parse().map_err(|_| ValidationError::InvalidByteSize {
-            value: s.to_string(),
-        })?;
+        let num: u64 = num_str
+            .parse()
+            .map_err(|_| ValidationError::InvalidByteSize {
+                value: s.to_string(),
+            })?;
 
         let multiplier: u64 = match unit {
             "" | "B" => 1,
@@ -176,13 +180,15 @@ impl FromStr for ByteSize {
             _ => {
                 return Err(ValidationError::InvalidByteSize {
                     value: s.to_string(),
-                })
+                });
             }
         };
 
-        let bytes = num.checked_mul(multiplier).ok_or_else(|| ValidationError::InvalidByteSize {
-            value: s.to_string(),
-        })?;
+        let bytes =
+            num.checked_mul(multiplier)
+                .ok_or_else(|| ValidationError::InvalidByteSize {
+                    value: s.to_string(),
+                })?;
 
         Ok(Self { bytes })
     }
@@ -332,9 +338,15 @@ mod tests {
         const MI: u64 = 1024 * 1024;
         const GI: u64 = 1024 * 1024 * 1024;
 
-        assert_eq!(ByteSize::from_str("256Mi").map(|b| b.as_bytes()), Ok(256 * MI));
+        assert_eq!(
+            ByteSize::from_str("256Mi").map(|b| b.as_bytes()),
+            Ok(256 * MI)
+        );
         assert_eq!(ByteSize::from_str("1Gi").map(|b| b.as_bytes()), Ok(GI));
-        assert_eq!(ByteSize::from_str("512Ki").map(|b| b.as_bytes()), Ok(512 * 1024));
+        assert_eq!(
+            ByteSize::from_str("512Ki").map(|b| b.as_bytes()),
+            Ok(512 * 1024)
+        );
         assert!(ByteSize::from_str("invalid").is_err());
     }
 

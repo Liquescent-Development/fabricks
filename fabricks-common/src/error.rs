@@ -15,7 +15,9 @@ pub enum ValidationError {
     },
 
     /// The name format is invalid.
-    #[error("invalid name '{name}': must match pattern [a-z0-9-]+ (lowercase letters, numbers, and hyphens only)")]
+    #[error(
+        "invalid name '{name}': must match pattern [a-z0-9-]+ (lowercase letters, numbers, and hyphens only)"
+    )]
     InvalidName {
         /// The invalid name.
         name: String,
