@@ -231,3 +231,85 @@ fn create_minimal_fabrickfile(name: &str) -> Fabrickfile {
         validate: None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_create_minimal_fabrickfile() {
+        let fabrickfile = create_minimal_fabrickfile("my-module");
+
+        assert_eq!(fabrickfile.info.name, "my-module");
+        assert_eq!(fabrickfile.info.version, "0.0.0");
+        assert_eq!(fabrickfile.fabrick_version, "1.0");
+        assert!(fabrickfile.build.is_none());
+    }
+
+    #[test]
+    fn test_build_module_args_empty() {
+        let args = build_module_args("test-module", &[]);
+        assert_eq!(args, vec!["test-module".to_string()]);
+    }
+
+    #[test]
+    fn test_build_module_args_with_extras() {
+        let extra_args = vec!["--flag".to_string(), "value".to_string()];
+        let args = build_module_args("test-module", &extra_args);
+
+        assert_eq!(args, vec![
+            "test-module".to_string(),
+            "--flag".to_string(),
+            "value".to_string(),
+        ]);
+    }
+
+    #[test]
+    fn test_load_from_file_sync_with_fabrickfile() {
+        let temp = TempDir::new().expect("create temp dir");
+
+        // Create a Fabrickfile
+        let fabrickfile_content = r#"
+            fabrick_version = "1.0"
+            [info]
+            name = "file-test"
+            version = "1.2.3"
+        "#;
+        std::fs::write(temp.path().join("Fabrickfile"), fabrickfile_content)
+            .expect("write fabrickfile");
+
+        // Create a WASM file
+        let wasm_content = b"\x00asm\x01\x00\x00\x00";
+        let wasm_path = temp.path().join("module.wasm");
+        std::fs::write(&wasm_path, wasm_content).expect("write wasm");
+
+        let (fabrickfile, wasm_bytes) = load_from_file_sync(&wasm_path).expect("load from file");
+
+        assert_eq!(fabrickfile.info.name, "file-test");
+        assert_eq!(fabrickfile.info.version, "1.2.3");
+        assert_eq!(wasm_bytes, wasm_content);
+    }
+
+    #[test]
+    fn test_load_from_file_sync_without_fabrickfile() {
+        let temp = TempDir::new().expect("create temp dir");
+
+        // Create a WASM file without a Fabrickfile
+        let wasm_content = b"\x00asm\x01\x00\x00\x00";
+        let wasm_path = temp.path().join("standalone.wasm");
+        std::fs::write(&wasm_path, wasm_content).expect("write wasm");
+
+        let (fabrickfile, wasm_bytes) = load_from_file_sync(&wasm_path).expect("load from file");
+
+        assert_eq!(fabrickfile.info.name, "standalone");
+        assert_eq!(fabrickfile.info.version, "0.0.0");
+        assert_eq!(wasm_bytes, wasm_content);
+    }
+
+    #[test]
+    fn test_load_from_file_sync_not_found() {
+        let result = load_from_file_sync(Path::new("/nonexistent/module.wasm"));
+        assert!(result.is_err());
+    }
+}

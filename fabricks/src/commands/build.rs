@@ -241,3 +241,178 @@ fn build_local_manifest(
         "annotations": annotations,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fabricks_common::models::fabrickfile::{Build, Info};
+    use fabricks_common::Capabilities;
+    use tempfile::TempDir;
+
+    fn test_fabrickfile() -> Fabrickfile {
+        Fabrickfile {
+            fabrick_version: "1.0".to_string(),
+            info: Info {
+                name: "test-module".to_string(),
+                version: "1.0.0".to_string(),
+                description: Some("A test module".to_string()),
+                authors: None,
+                license: None,
+                homepage: None,
+                repository: None,
+                documentation: None,
+                keywords: None,
+            },
+            from: None,
+            source: None,
+            runtime: None,
+            build: Some(Build {
+                command: "echo 'test'".to_string(),
+                workdir: None,
+                output: "output.wasm".to_string(),
+                watch: None,
+                environment: None,
+                pre_build: None,
+                post_build: None,
+            }),
+            exports: None,
+            imports: None,
+            capabilities: Capabilities::default(),
+            files: None,
+            config: None,
+            health_check: None,
+            security: None,
+            labels: None,
+            validate: None,
+        }
+    }
+
+    #[test]
+    fn test_find_fabrickfile_file_path() {
+        let temp = TempDir::new().expect("create temp dir");
+        let fabrickfile_path = temp.path().join("Fabrickfile");
+
+        let content = r#"
+            fabrick_version = "1.0"
+            [info]
+            name = "test"
+            version = "1.0.0"
+        "#;
+        std::fs::write(&fabrickfile_path, content).expect("write fabrickfile");
+
+        let (path, fabrickfile) = find_fabrickfile(&fabrickfile_path).expect("find fabrickfile");
+        assert_eq!(path, fabrickfile_path);
+        assert_eq!(fabrickfile.info.name, "test");
+    }
+
+    #[test]
+    fn test_find_fabrickfile_directory() {
+        let temp = TempDir::new().expect("create temp dir");
+        let fabrickfile_path = temp.path().join("Fabrickfile");
+
+        let content = r#"
+            fabrick_version = "1.0"
+            [info]
+            name = "dir-test"
+            version = "2.0.0"
+        "#;
+        std::fs::write(&fabrickfile_path, content).expect("write fabrickfile");
+
+        let (path, fabrickfile) = find_fabrickfile(temp.path()).expect("find fabrickfile");
+        assert_eq!(path, fabrickfile_path);
+        assert_eq!(fabrickfile.info.name, "dir-test");
+    }
+
+    #[test]
+    fn test_find_fabrickfile_not_found() {
+        let temp = TempDir::new().expect("create temp dir");
+        let result = find_fabrickfile(temp.path());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("No Fabrickfile found"));
+    }
+
+    #[test]
+    fn test_find_fabrickfile_path_not_exists() {
+        let result = find_fabrickfile(Path::new("/nonexistent/path"));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("does not exist"));
+    }
+
+    #[test]
+    fn test_read_wasm_output_not_found() {
+        let temp = TempDir::new().expect("create temp dir");
+        let fabrickfile = test_fabrickfile();
+
+        let result = read_wasm_output(&fabrickfile, temp.path());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Build output not found"));
+    }
+
+    #[test]
+    fn test_read_wasm_output_success() {
+        let temp = TempDir::new().expect("create temp dir");
+        let mut fabrickfile = test_fabrickfile();
+        fabrickfile.build.as_mut().expect("build").output = "test.wasm".to_string();
+
+        let wasm_path = temp.path().join("test.wasm");
+        let wasm_content = b"\x00asm\x01\x00\x00\x00";
+        std::fs::write(&wasm_path, wasm_content).expect("write wasm");
+
+        let result = read_wasm_output(&fabrickfile, temp.path()).expect("read wasm");
+        assert_eq!(result, wasm_content);
+    }
+
+    #[test]
+    fn test_build_local_manifest() {
+        let fabrickfile = test_fabrickfile();
+        let wasm = vec![0x00, 0x61, 0x73, 0x6d];
+        let module = FabricksModule::new(fabrickfile, wasm);
+
+        let manifest = build_local_manifest(
+            &module,
+            "sha256:config123",
+            "sha256:wasm456",
+        );
+
+        assert_eq!(manifest["schemaVersion"], 2);
+        assert_eq!(
+            manifest["mediaType"],
+            "application/vnd.oci.image.manifest.v1+json"
+        );
+        assert_eq!(manifest["config"]["digest"], "sha256:config123");
+        assert_eq!(manifest["layers"][0]["digest"], "sha256:wasm456");
+        assert_eq!(manifest["layers"][0]["size"], 4);
+    }
+
+    #[test]
+    fn test_run_build_command_no_build_section() {
+        let temp = TempDir::new().expect("create temp dir");
+        let mut fabrickfile = test_fabrickfile();
+        fabrickfile.build = None;
+
+        let result = run_build_command(&fabrickfile, temp.path());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("no [build] section"));
+    }
+
+    #[test]
+    fn test_run_build_command_success() {
+        let temp = TempDir::new().expect("create temp dir");
+        let mut fabrickfile = test_fabrickfile();
+        fabrickfile.build.as_mut().expect("build").command = "true".to_string();
+
+        let result = run_build_command(&fabrickfile, temp.path());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_build_command_failure() {
+        let temp = TempDir::new().expect("create temp dir");
+        let mut fabrickfile = test_fabrickfile();
+        fabrickfile.build.as_mut().expect("build").command = "false".to_string();
+
+        let result = run_build_command(&fabrickfile, temp.path());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("failed"));
+    }
+}

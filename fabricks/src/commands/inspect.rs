@@ -260,3 +260,129 @@ fn create_minimal_fabrickfile(name: &str) -> Fabrickfile {
         validate: None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fabricks_common::models::capability::{FilesystemCapabilities, NetworkCapabilities};
+    use fabricks_common::Capabilities;
+    use tempfile::TempDir;
+
+    fn test_fabrickfile() -> Fabrickfile {
+        Fabrickfile {
+            fabrick_version: "1.0".to_string(),
+            info: fabricks_common::models::fabrickfile::Info {
+                name: "inspect-test".to_string(),
+                version: "2.0.0".to_string(),
+                description: Some("Test module for inspect".to_string()),
+                authors: Some(vec!["Test Author".to_string()]),
+                license: Some("MIT".to_string()),
+                homepage: None,
+                repository: None,
+                documentation: None,
+                keywords: None,
+            },
+            from: None,
+            source: None,
+            runtime: None,
+            build: None,
+            exports: None,
+            imports: None,
+            capabilities: Capabilities {
+                env: Some(vec!["HOME".to_string(), "PATH".to_string()]),
+                filesystem: Some(FilesystemCapabilities {
+                    read: Some(vec!["/tmp".to_string()]),
+                    write: None,
+                    read_write: None,
+                }),
+                network: Some(NetworkCapabilities {
+                    connect: Some(vec!["api.example.com:443".to_string()]),
+                    listen: Some(vec![8080]),
+                    allow_all_outbound: None,
+                }),
+                wasm: None,
+            },
+            files: None,
+            config: None,
+            health_check: None,
+            security: None,
+            labels: None,
+            validate: None,
+        }
+    }
+
+    #[test]
+    fn test_create_minimal_fabrickfile() {
+        let fabrickfile = create_minimal_fabrickfile("my-module");
+
+        assert_eq!(fabrickfile.info.name, "my-module");
+        assert_eq!(fabrickfile.info.version, "0.0.0");
+    }
+
+    #[test]
+    fn test_load_from_file_sync() {
+        let temp = TempDir::new().expect("create temp dir");
+        let wasm_content = b"\x00asm\x01\x00\x00\x00";
+        let wasm_path = temp.path().join("test.wasm");
+        std::fs::write(&wasm_path, wasm_content).expect("write wasm");
+
+        let (fabrickfile, wasm_size) = load_from_file_sync(&wasm_path).expect("load file");
+
+        assert_eq!(fabrickfile.info.name, "test");
+        assert_eq!(wasm_size, 8);
+    }
+
+    #[test]
+    fn test_load_module_sync_file() {
+        let temp = TempDir::new().expect("create temp dir");
+        let wasm_content = b"\x00asm\x01\x00\x00\x00";
+        let wasm_path = temp.path().join("module.wasm");
+        std::fs::write(&wasm_path, wasm_content).expect("write wasm");
+
+        let path_str = wasm_path.to_str().expect("path to str");
+        let (fabrickfile, wasm_size) = load_module_sync(path_str).expect("load module");
+
+        assert_eq!(fabrickfile.info.name, "module");
+        assert_eq!(wasm_size, 8);
+    }
+
+    #[test]
+    fn test_load_module_sync_registry_ref() {
+        let result = load_module_sync("ghcr.io/user/module:latest");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not yet supported"));
+    }
+
+    #[test]
+    fn test_output_json() {
+        let fabrickfile = test_fabrickfile();
+        // Just verify it doesn't panic
+        let result = output_json(&fabrickfile, 1024);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_output_text() {
+        let fabrickfile = test_fabrickfile();
+        // Just verify it doesn't panic
+        let result = output_text(&fabrickfile, 1024);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_output_capabilities() {
+        let fabrickfile = test_fabrickfile();
+        // Just verify it doesn't panic
+        let result = output_capabilities(&fabrickfile);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_output_capabilities_empty() {
+        let mut fabrickfile = test_fabrickfile();
+        fabrickfile.capabilities = Capabilities::default();
+
+        let result = output_capabilities(&fabrickfile);
+        assert!(result.is_ok());
+    }
+}
