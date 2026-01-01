@@ -17,9 +17,11 @@
 use std::process::ExitCode;
 
 use clap::Parser;
+use tokio::runtime::Runtime as TokioRuntime;
 
 mod cli;
 mod commands;
+mod credentials;
 mod output;
 
 use cli::{Cli, Commands};
@@ -32,8 +34,24 @@ fn main() -> ExitCode {
         init_tracing();
     }
 
+    // Create async runtime
+    let rt = match TokioRuntime::new() {
+        Ok(rt) => rt,
+        Err(e) => {
+            let _ = output::writeln_stderr(&format!("Failed to create runtime: {e}"));
+            return ExitCode::FAILURE;
+        }
+    };
+
     let result = match cli.command {
+        Commands::Build(args) => rt.block_on(commands::build::run(&args)),
+        Commands::Run(args) => rt.block_on(commands::run::run(&args)),
+        Commands::Push(args) => rt.block_on(commands::push::run(&args)),
+        Commands::Pull(args) => rt.block_on(commands::pull::run(&args)),
+        Commands::Inspect(args) => commands::inspect::run(&args),
         Commands::Validate(args) => commands::validate::run(&args),
+        Commands::Login(args) => commands::login::run(&args),
+        Commands::Logout(args) => commands::logout::run(&args),
         Commands::Version => commands::version::run(),
     };
 

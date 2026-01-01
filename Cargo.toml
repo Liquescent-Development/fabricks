@@ -89,5 +89,14 @@ futures = "0.3"
 bytes = "1.9"
 petgraph = "0.7"
 
+# Password input
+rpassword = "7.3"
+
+# Secure credential storage (OS keychain/keyring)
+keyring = "3.6"
+
+# Directories
+dirs = "6.0"
+
 # Testing
 tempfile = "3.15"
