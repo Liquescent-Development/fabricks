@@ -24,14 +24,180 @@ pub struct Cli {
 /// Available CLI commands.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Build a WASM module from a Fabrickfile.
+    ///
+    /// Compiles the source code and packages it as an OCI artifact.
+    Build(BuildArgs),
+
+    /// Run a WASM module locally.
+    ///
+    /// Executes the module with the specified capabilities.
+    Run(RunArgs),
+
+    /// Push a module to an OCI registry.
+    ///
+    /// Uploads the built module to a container registry.
+    Push(PushArgs),
+
+    /// Pull a module from an OCI registry.
+    ///
+    /// Downloads a module from a container registry.
+    Pull(PullArgs),
+
+    /// Inspect a WASM module.
+    ///
+    /// Display metadata and capabilities of a module.
+    Inspect(InspectArgs),
+
     /// Validate configuration files.
     ///
     /// Checks Fabrickfile or fabricks-mortar.toml for syntax errors
     /// and validates all fields according to the specification.
     Validate(ValidateArgs),
 
+    /// Log in to an OCI registry.
+    ///
+    /// Saves credentials for pushing and pulling modules.
+    Login(LoginArgs),
+
+    /// Log out from an OCI registry.
+    ///
+    /// Removes saved credentials for a registry.
+    Logout(LogoutArgs),
+
     /// Show version information.
     Version,
+}
+
+/// Arguments for the build command.
+#[derive(Parser, Debug)]
+pub struct BuildArgs {
+    /// Path to the Fabrickfile or directory containing one.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+
+    /// Tag for the built module (e.g., "my-module:1.0.0").
+    ///
+    /// If not specified, uses the name and version from the Fabrickfile.
+    #[arg(short, long)]
+    pub tag: Option<String>,
+
+    /// Skip running the build command (use pre-built WASM).
+    #[arg(long)]
+    pub no_build: bool,
+
+    /// Output format for build results.
+    #[arg(short, long, value_enum, default_value = "text")]
+    pub format: OutputFormat,
+}
+
+/// Arguments for the run command.
+#[derive(Parser, Debug)]
+pub struct RunArgs {
+    /// Module reference (local path, tag, or registry reference).
+    ///
+    /// Examples:
+    /// - ./module.wasm
+    /// - my-module:1.0.0
+    /// - ghcr.io/user/module:latest
+    pub module: String,
+
+    /// Arguments to pass to the WASM module.
+    #[arg(last = true)]
+    pub args: Vec<String>,
+
+    /// Override environment variables to pass to the module.
+    ///
+    /// Format: NAME=VALUE
+    #[arg(short, long = "env")]
+    pub envs: Vec<String>,
+
+    /// Don't enforce capability restrictions.
+    #[arg(long)]
+    pub no_capabilities: bool,
+}
+
+/// Arguments for the push command.
+#[derive(Parser, Debug)]
+pub struct PushArgs {
+    /// Module reference to push (local tag).
+    ///
+    /// Example: my-module:1.0.0
+    pub source: String,
+
+    /// Registry reference to push to.
+    ///
+    /// Example: ghcr.io/user/my-module:1.0.0
+    pub destination: String,
+
+    /// Accept invalid TLS certificates (for testing).
+    #[arg(long)]
+    pub insecure: bool,
+}
+
+/// Arguments for the pull command.
+#[derive(Parser, Debug)]
+pub struct PullArgs {
+    /// Registry reference to pull from.
+    ///
+    /// Example: ghcr.io/user/my-module:1.0.0
+    pub reference: String,
+
+    /// Local tag to save as.
+    ///
+    /// If not specified, uses the reference as the tag.
+    #[arg(short, long)]
+    pub tag: Option<String>,
+
+    /// Accept invalid TLS certificates (for testing).
+    #[arg(long)]
+    pub insecure: bool,
+}
+
+/// Arguments for the inspect command.
+#[derive(Parser, Debug)]
+pub struct InspectArgs {
+    /// Module reference to inspect (local path, tag, or registry reference).
+    pub module: String,
+
+    /// Output format for inspection results.
+    #[arg(short, long, value_enum, default_value = "text")]
+    pub format: OutputFormat,
+}
+
+/// Arguments for the login command.
+#[derive(Parser, Debug)]
+pub struct LoginArgs {
+    /// Registry to authenticate with.
+    ///
+    /// Example: ghcr.io
+    pub registry: String,
+
+    /// Username for authentication.
+    ///
+    /// If not provided, will prompt interactively.
+    #[arg(short, long)]
+    pub username: Option<String>,
+
+    /// Password for authentication.
+    ///
+    /// If not provided, will prompt interactively.
+    /// Consider using --password-stdin for security.
+    #[arg(short, long)]
+    pub password: Option<String>,
+
+    /// Read password from stdin.
+    #[arg(long)]
+    pub password_stdin: bool,
+}
+
+/// Arguments for the logout command.
+#[derive(Parser, Debug)]
+pub struct LogoutArgs {
+    /// Registry to log out from.
+    ///
+    /// Example: ghcr.io
+    pub registry: String,
 }
 
 /// Arguments for the validate command.
