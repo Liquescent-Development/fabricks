@@ -22,6 +22,7 @@ use tokio::runtime::Runtime as TokioRuntime;
 mod cli;
 mod commands;
 mod credentials;
+mod daemon_client;
 mod output;
 
 use cli::{Cli, Commands};
@@ -53,6 +54,7 @@ fn main() -> ExitCode {
         Commands::Login(args) => commands::login::run(&args),
         Commands::Logout(args) => commands::logout::run(&args),
         Commands::Version => commands::version::run(),
+        Commands::Daemon(args) => rt.block_on(commands::daemon::run(&args)),
     };
 
     match result {

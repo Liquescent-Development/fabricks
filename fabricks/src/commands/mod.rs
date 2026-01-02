@@ -1,6 +1,7 @@
 //! CLI command implementations.
 
 pub mod build;
+pub mod daemon;
 pub mod inspect;
 pub mod login;
 pub mod logout;

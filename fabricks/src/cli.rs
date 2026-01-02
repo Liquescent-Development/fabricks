@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 /// Fabricks - Declarative WASM Orchestration Platform.
 ///
@@ -67,6 +67,11 @@ pub enum Commands {
 
     /// Show version information.
     Version,
+
+    /// Daemon management commands.
+    ///
+    /// Interact with the fabricksd daemon.
+    Daemon(DaemonArgs),
 }
 
 /// Arguments for the build command.
@@ -238,4 +243,30 @@ pub enum OutputFormat {
     Text,
     /// JSON output for programmatic consumption.
     Json,
+}
+
+/// Arguments for daemon commands.
+#[derive(Args, Debug)]
+pub struct DaemonArgs {
+    #[command(subcommand)]
+    pub command: DaemonCommands,
+}
+
+/// Daemon subcommands.
+#[derive(Subcommand, Debug)]
+pub enum DaemonCommands {
+    /// Show daemon information.
+    ///
+    /// Displays version, uptime, and configuration of the running daemon.
+    Info {
+        /// Output format.
+        #[arg(short, long, value_enum, default_value = "text")]
+        format: OutputFormat,
+
+        /// Custom socket path.
+        ///
+        /// Override the default Unix socket path.
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
 }
