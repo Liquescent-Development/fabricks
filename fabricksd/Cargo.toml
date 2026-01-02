@@ -39,6 +39,7 @@ tracing-subscriber.workspace = true
 sled.workspace = true
 uuid.workspace = true
 chrono.workspace = true
+dirs.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

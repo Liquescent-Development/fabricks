@@ -1,9 +1,19 @@
 //! Output utilities for CLI commands.
 //!
-//! This module provides a consistent way to write output to stderr,
-//! avoiding the clippy `print_stderr` lint while maintaining testability.
+//! This module provides a consistent way to write output to stdout/stderr,
+//! avoiding the clippy `print_stdout`/`print_stderr` lints while maintaining testability.
 
 use std::io::{self, Write};
+
+/// Write a line to stdout.
+///
+/// # Errors
+///
+/// Returns an error if writing to stdout fails.
+pub fn writeln(message: &str) -> io::Result<()> {
+    let mut stdout = io::stdout();
+    writeln!(stdout, "{message}")
+}
 
 /// Write a line to stderr.
 ///
