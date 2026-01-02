@@ -72,6 +72,16 @@ pub enum Commands {
     ///
     /// Interact with the fabricksd daemon.
     Daemon(DaemonArgs),
+
+    /// Service management commands.
+    ///
+    /// Manage services running on the daemon.
+    Service(ServiceArgs),
+
+    /// Mortar project commands.
+    ///
+    /// Manage multi-service deployments.
+    Mortar(MortarArgs),
 }
 
 /// Arguments for the build command.
@@ -268,5 +278,115 @@ pub enum DaemonCommands {
         /// Override the default Unix socket path.
         #[arg(long)]
         socket: Option<PathBuf>,
+    },
+}
+
+/// Arguments for service commands.
+#[derive(Args, Debug)]
+pub struct ServiceArgs {
+    /// Custom socket path.
+    #[arg(long, global = true)]
+    pub socket: Option<PathBuf>,
+
+    #[command(subcommand)]
+    pub command: ServiceCommands,
+}
+
+/// Service subcommands.
+#[derive(Subcommand, Debug)]
+pub enum ServiceCommands {
+    /// List all running services.
+    #[command(name = "ls", alias = "list")]
+    List {
+        /// Output format.
+        #[arg(short, long, value_enum, default_value = "text")]
+        format: OutputFormat,
+    },
+
+    /// Start a service.
+    Start {
+        /// Service ID.
+        id: String,
+    },
+
+    /// Stop a service.
+    Stop {
+        /// Service ID.
+        id: String,
+    },
+
+    /// Scale a service to a target number of replicas.
+    Scale {
+        /// Service ID.
+        id: String,
+
+        /// Target number of replicas.
+        replicas: usize,
+    },
+
+    /// Remove (delete) a stopped service.
+    #[command(name = "rm", alias = "remove")]
+    Remove {
+        /// Service ID.
+        id: String,
+
+        /// Force removal (stop first if running).
+        #[arg(short, long)]
+        force: bool,
+    },
+}
+
+/// Arguments for mortar commands.
+#[derive(Args, Debug)]
+pub struct MortarArgs {
+    /// Custom socket path.
+    #[arg(long, global = true)]
+    pub socket: Option<PathBuf>,
+
+    #[command(subcommand)]
+    pub command: MortarCommands,
+}
+
+/// Mortar project subcommands.
+#[derive(Subcommand, Debug)]
+pub enum MortarCommands {
+    /// Deploy a mortar project.
+    ///
+    /// Starts all services defined in fabricks-mortar.toml.
+    Up {
+        /// Path to fabricks-mortar.toml or directory containing it.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Output format.
+        #[arg(short, long, value_enum, default_value = "text")]
+        format: OutputFormat,
+    },
+
+    /// Tear down a mortar project.
+    ///
+    /// Stops and removes all services in the project.
+    Down {
+        /// Project name.
+        project: String,
+    },
+
+    /// Show status of services in a project.
+    #[command(name = "ps", alias = "status")]
+    Status {
+        /// Project name.
+        project: String,
+
+        /// Output format.
+        #[arg(short, long, value_enum, default_value = "text")]
+        format: OutputFormat,
+    },
+
+    /// List all mortar projects.
+    #[command(name = "ls", alias = "list")]
+    List {
+        /// Output format.
+        #[arg(short, long, value_enum, default_value = "text")]
+        format: OutputFormat,
     },
 }
