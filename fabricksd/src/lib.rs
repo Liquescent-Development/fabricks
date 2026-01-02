@@ -11,12 +11,14 @@
 //! - [`store`] - Persistent state storage using sled
 //! - [`events`] - Event bus for pub/sub messaging
 //! - [`api`] - HTTP API server and handlers
+//! - [`service`] - Service lifecycle management
 //! - [`shutdown`] - Graceful shutdown coordination
 
 pub mod api;
 pub mod config;
 pub mod error;
 pub mod events;
+pub mod service;
 pub mod shutdown;
 pub mod state;
 pub mod store;
@@ -25,5 +27,6 @@ pub mod store;
 pub use config::DaemonConfig;
 pub use error::{DaemonError, Result};
 pub use events::{Event, EventBus, EventType};
+pub use service::{ServiceConfig, ServiceInfo, ServiceManager};
 pub use state::AppState;
 pub use store::StateStore;

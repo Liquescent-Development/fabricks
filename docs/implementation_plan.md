@@ -1028,16 +1028,22 @@ cargo install wasm-opt
 
 ---
 
-## Phase 7: Service Manager
+## Phase 7: Service Manager & CLI Integration
 
-**Goal:** Manage service lifecycle
+**Goal:** Manage service lifecycle through the daemon, with full CLI integration. The daemon is the default execution environment for all operations.
 
-**Duration:** 7-10 days
+**Duration:** 10-14 days
+
+### Architecture Note
+
+All CLI commands that execute WASM modules go through the daemon. The daemon is the single point of orchestration - there is no "local-only" mode for running services. This ensures consistent behavior, proper capability enforcement, and centralized state management.
 
 ### Tasks
 
+#### Part A: Daemon Service Manager
+
 1. **Implement service manager**
-   
+
    `fabricksd/src/service/manager.rs`:
 ```rust
    pub struct ServiceManager {
@@ -1046,11 +1052,11 @@ cargo install wasm-opt
        state_store: Arc<StateStore>,
        event_bus: Arc<EventBus>,
    }
-   
+
    impl ServiceManager {
        pub async fn create_service(&mut self, config: ServiceConfig) -> Result<String> {
            let id = generate_id();
-           
+
            let state = ServiceState {
                id: id.clone(),
                name: config.name.clone(),
@@ -1058,51 +1064,51 @@ cargo install wasm-opt
                replicas: ReplicaState::default(),
                created_at: Utc::now(),
            };
-           
+
            self.state_store.save_service(&state)?;
-           
+
            let handle = ServiceHandle::new(id.clone(), config, self.runtime_pool.clone());
            self.services.insert(id.clone(), handle);
-           
+
            self.event_bus.publish(Event::ServiceCreated { id: id.clone() }).await;
-           
+
            Ok(id)
        }
-       
+
        pub async fn start_service(&mut self, id: &str) -> Result<()> {
            let handle = self.services.get_mut(id).ok_or(Error::NotFound)?;
            handle.start().await?;
-           
+
            self.event_bus.publish(Event::ServiceStarted { id: id.to_string() }).await;
-           
+
            Ok(())
        }
-       
+
        pub async fn stop_service(&mut self, id: &str) -> Result<()> {
            let handle = self.services.get_mut(id).ok_or(Error::NotFound)?;
            handle.stop().await?;
-           
+
            self.event_bus.publish(Event::ServiceStopped { id: id.to_string() }).await;
-           
+
            Ok(())
        }
-       
+
        pub async fn scale_service(&mut self, id: &str, replicas: usize) -> Result<()> {
            let handle = self.services.get_mut(id).ok_or(Error::NotFound)?;
            handle.scale(replicas).await?;
-           
+
            self.event_bus.publish(Event::ServiceScaled {
                id: id.to_string(),
                replicas,
            }).await;
-           
+
            Ok(())
        }
    }
 ```
 
 2. **Create service handle**
-   
+
    `fabricksd/src/service/handle.rs`:
 ```rust
    pub struct ServiceHandle {
@@ -1111,7 +1117,7 @@ cargo install wasm-opt
        instances: Vec<Instance>,
        runtime_pool: RuntimePool,
    }
-   
+
    impl ServiceHandle {
        pub async fn start(&mut self) -> Result<()> {
            for _ in 0..self.config.replicas.min {
@@ -1120,25 +1126,25 @@ cargo install wasm-opt
            }
            Ok(())
        }
-       
+
        async fn spawn_instance(&self) -> Result<Instance> {
            let runtime = self.runtime_pool.acquire().await?;
            let instance_id = format!("{}-{}", self.id, self.instances.len());
-           
+
            tokio::spawn(async move {
                runtime.run().await
            });
-           
+
            Ok(Instance {
                id: instance_id,
                state: InstanceState::Running,
                started_at: Utc::now(),
            })
        }
-       
+
        pub async fn scale(&mut self, target: usize) -> Result<()> {
            let current = self.instances.len();
-           
+
            if target > current {
                // Scale up
                for _ in 0..(target - current) {
@@ -1153,63 +1159,26 @@ cargo install wasm-opt
                    }
                }
            }
-           
+
            Ok(())
        }
    }
 ```
 
-3. **Add API handlers for services**
-   
-   `fabricksd/src/api/handlers/services.rs`:
-```rust
-   pub async fn create_service(
-       State(state): State<AppState>,
-       Json(req): Json<CreateServiceRequest>,
-   ) -> Json<ApiResponse<CreateServiceResponse>> {
-       let mut manager = state.service_manager.write().await;
-       
-       match manager.create_service(req.into()).await {
-           Ok(id) => Json(ApiResponse::success(CreateServiceResponse { id })),
-           Err(e) => Json(ApiResponse::error(e)),
-       }
-   }
-   
-   pub async fn list_services(
-       State(state): State<AppState>,
-   ) -> Json<ApiResponse<Vec<ServiceInfo>>> {
-       let manager = state.service_manager.read().await;
-       let services = manager.list_services();
-       Json(ApiResponse::success(services))
-   }
-   
-   pub async fn get_service(
-       State(state): State<AppState>,
-       Path(id): Path<String>,
-   ) -> Json<ApiResponse<ServiceDetail>> {
-       let manager = state.service_manager.read().await;
-       
-       match manager.get_service(&id) {
-           Some(service) => Json(ApiResponse::success(service)),
-           None => Json(ApiResponse::error(Error::NotFound)),
-       }
-   }
-```
+3. **Add dependency resolution**
 
-4. **Add dependency resolution**
-   
    `fabricksd/src/service/dependency.rs`:
 ```rust
    pub fn resolve_startup_order(services: &[ServiceConfig]) -> Result<Vec<String>> {
        let mut graph = DiGraph::new();
        let mut nodes = HashMap::new();
-       
+
        // Build dependency graph
        for service in services {
            let node = graph.add_node(service.name.clone());
            nodes.insert(service.name.clone(), node);
        }
-       
+
        for service in services {
            let from = nodes[&service.name];
            for dep in &service.depends_on {
@@ -1217,7 +1186,7 @@ cargo install wasm-opt
                graph.add_edge(from, to, ());
            }
        }
-       
+
        // Topological sort
        match petgraph::algo::toposort(&graph, None) {
            Ok(order) => {
@@ -1230,14 +1199,378 @@ cargo install wasm-opt
    }
 ```
 
+#### Part B: Daemon API Endpoints
+
+4. **Add service API handlers**
+
+   `fabricksd/src/api/handlers/services.rs`:
+```rust
+   // POST /v1/services - Create and start a service from Fabrickfile
+   pub async fn create_service(
+       State(state): State<AppState>,
+       Json(req): Json<CreateServiceRequest>,
+   ) -> Json<ApiResponse<CreateServiceResponse>> {
+       let mut manager = state.service_manager.write().await;
+
+       match manager.create_service(req.into()).await {
+           Ok(id) => Json(ApiResponse::success(CreateServiceResponse { id })),
+           Err(e) => Json(ApiResponse::error(e)),
+       }
+   }
+
+   // GET /v1/services - List all services
+   pub async fn list_services(
+       State(state): State<AppState>,
+   ) -> Json<ApiResponse<Vec<ServiceInfo>>> {
+       let manager = state.service_manager.read().await;
+       let services = manager.list_services();
+       Json(ApiResponse::success(services))
+   }
+
+   // GET /v1/services/:id - Get service details
+   pub async fn get_service(
+       State(state): State<AppState>,
+       Path(id): Path<String>,
+   ) -> Json<ApiResponse<ServiceDetail>> {
+       let manager = state.service_manager.read().await;
+
+       match manager.get_service(&id) {
+           Some(service) => Json(ApiResponse::success(service)),
+           None => Json(ApiResponse::error(Error::NotFound)),
+       }
+   }
+
+   // POST /v1/services/:id/stop - Stop a service
+   pub async fn stop_service(
+       State(state): State<AppState>,
+       Path(id): Path<String>,
+   ) -> Json<ApiResponse<()>> {
+       let mut manager = state.service_manager.write().await;
+
+       match manager.stop_service(&id).await {
+           Ok(()) => Json(ApiResponse::success(())),
+           Err(e) => Json(ApiResponse::error(e)),
+       }
+   }
+
+   // DELETE /v1/services/:id - Remove a service
+   pub async fn delete_service(
+       State(state): State<AppState>,
+       Path(id): Path<String>,
+   ) -> Json<ApiResponse<()>> {
+       let mut manager = state.service_manager.write().await;
+
+       match manager.delete_service(&id).await {
+           Ok(()) => Json(ApiResponse::success(())),
+           Err(e) => Json(ApiResponse::error(e)),
+       }
+   }
+
+   // GET /v1/services/:id/logs - Get service logs
+   pub async fn get_service_logs(
+       State(state): State<AppState>,
+       Path(id): Path<String>,
+       Query(params): Query<LogParams>,
+   ) -> Json<ApiResponse<Vec<LogEntry>>> {
+       let manager = state.service_manager.read().await;
+
+       match manager.get_logs(&id, params.lines, params.follow).await {
+           Ok(logs) => Json(ApiResponse::success(logs)),
+           Err(e) => Json(ApiResponse::error(e)),
+       }
+   }
+```
+
+#### Part C: CLI Commands (Daemon Integration)
+
+5. **Update `fabricks run` to use daemon**
+
+   `fabricks/src/commands/run.rs`:
+```rust
+   pub async fn run(args: &RunArgs) -> Result<()> {
+       let client = DaemonClient::new();
+
+       // 1. Parse the Fabrickfile
+       let fabrickfile = if args.module.ends_with(".wasm") {
+           // Direct WASM file - create minimal config
+           Fabrickfile::from_wasm_path(&args.module)?
+       } else {
+           // Directory with Fabrickfile
+           parse_fabrickfile(&args.module)?
+       };
+
+       // 2. Send to daemon to create and start service
+       let service_id = client.create_service(&fabrickfile).await?;
+       client.start_service(&service_id).await?;
+
+       output::writeln(&format!("Service started: {}", service_id))?;
+
+       // 3. If --attach, stream logs
+       if args.attach {
+           client.stream_logs(&service_id).await?;
+       }
+
+       Ok(())
+   }
+```
+
+6. **Add `fabricks service` subcommands**
+
+   `fabricks/src/commands/service.rs`:
+```rust
+   // fabricks service ls
+   pub async fn list(args: &ServiceListArgs) -> Result<()> {
+       let client = DaemonClient::new();
+       let services = client.list_services().await?;
+
+       if services.is_empty() {
+           output::writeln("No services running")?;
+           return Ok(());
+       }
+
+       output::writeln("ID                    NAME              STATUS    REPLICAS")?;
+       for svc in services {
+           output::writeln(&format!(
+               "{:<21} {:<17} {:<9} {}/{}",
+               svc.id, svc.name, svc.status, svc.running_replicas, svc.desired_replicas
+           ))?;
+       }
+       Ok(())
+   }
+
+   // fabricks service logs <id>
+   pub async fn logs(args: &ServiceLogsArgs) -> Result<()> {
+       let client = DaemonClient::new();
+
+       if args.follow {
+           client.stream_logs(&args.service_id).await?;
+       } else {
+           let logs = client.get_logs(&args.service_id, args.lines).await?;
+           for entry in logs {
+               output::writeln(&format!("{} {}", entry.timestamp, entry.message))?;
+           }
+       }
+       Ok(())
+   }
+
+   // fabricks service stop <id>
+   pub async fn stop(args: &ServiceStopArgs) -> Result<()> {
+       let client = DaemonClient::new();
+       client.stop_service(&args.service_id).await?;
+       output::writeln(&format!("Stopped service: {}", args.service_id))?;
+       Ok(())
+   }
+
+   // fabricks service rm <id>
+   pub async fn remove(args: &ServiceRemoveArgs) -> Result<()> {
+       let client = DaemonClient::new();
+       client.delete_service(&args.service_id).await?;
+       output::writeln(&format!("Removed service: {}", args.service_id))?;
+       Ok(())
+   }
+```
+
+7. **Add `fabricks mortar` subcommands**
+
+   `fabricks/src/commands/mortar.rs`:
+```rust
+   // fabricks mortar up
+   pub async fn up(args: &MortarUpArgs) -> Result<()> {
+       let client = DaemonClient::new();
+
+       // 1. Parse mortar file
+       let mortar = parse_mortar_file(&args.path)?;
+
+       // 2. Resolve dependency order
+       let order = resolve_startup_order(&mortar.services)?;
+
+       // 3. Create and start each service in order
+       for service_name in &order {
+           let service_config = &mortar.services[service_name];
+           output::writeln(&format!("Starting {}...", service_name))?;
+
+           let id = client.create_service_from_mortar(&mortar.project.name, service_name, service_config).await?;
+           client.start_service(&id).await?;
+
+           output::writeln(&format!("  ✓ {} started ({})", service_name, id))?;
+       }
+
+       output::writeln(&format!("\n✓ All {} services started", order.len()))?;
+       Ok(())
+   }
+
+   // fabricks mortar down
+   pub async fn down(args: &MortarDownArgs) -> Result<()> {
+       let client = DaemonClient::new();
+
+       // 1. Parse mortar file to get project name
+       let mortar = parse_mortar_file(&args.path)?;
+
+       // 2. Find all services belonging to this project
+       let services = client.list_services_by_project(&mortar.project.name).await?;
+
+       // 3. Stop and remove each service
+       for svc in services {
+           output::writeln(&format!("Stopping {}...", svc.name))?;
+           client.stop_service(&svc.id).await?;
+           client.delete_service(&svc.id).await?;
+       }
+
+       output::writeln(&format!("\n✓ All services stopped"))?;
+       Ok(())
+   }
+
+   // fabricks mortar ps
+   pub async fn ps(args: &MortarPsArgs) -> Result<()> {
+       let client = DaemonClient::new();
+       let mortar = parse_mortar_file(&args.path)?;
+
+       let services = client.list_services_by_project(&mortar.project.name).await?;
+
+       output::writeln(&format!("Project: {}\n", mortar.project.name))?;
+       output::writeln("SERVICE           STATUS    REPLICAS")?;
+       for svc in services {
+           output::writeln(&format!(
+               "{:<17} {:<9} {}/{}",
+               svc.name, svc.status, svc.running_replicas, svc.desired_replicas
+           ))?;
+       }
+       Ok(())
+   }
+```
+
+8. **Update CLI argument definitions**
+
+   `fabricks/src/cli.rs` - Add new subcommands:
+```rust
+   #[derive(Subcommand, Debug)]
+   pub enum Commands {
+       // ... existing commands ...
+
+       /// Service management commands.
+       Service(ServiceArgs),
+
+       /// Multi-service composition commands.
+       Mortar(MortarArgs),
+   }
+
+   #[derive(Args, Debug)]
+   pub struct ServiceArgs {
+       #[command(subcommand)]
+       pub command: ServiceCommands,
+   }
+
+   #[derive(Subcommand, Debug)]
+   pub enum ServiceCommands {
+       /// List running services.
+       Ls,
+       /// Show service logs.
+       Logs(ServiceLogsArgs),
+       /// Stop a service.
+       Stop(ServiceStopArgs),
+       /// Remove a service.
+       Rm(ServiceRemoveArgs),
+       /// Show service details.
+       Inspect(ServiceInspectArgs),
+   }
+
+   #[derive(Args, Debug)]
+   pub struct MortarArgs {
+       #[command(subcommand)]
+       pub command: MortarCommands,
+   }
+
+   #[derive(Subcommand, Debug)]
+   pub enum MortarCommands {
+       /// Start all services defined in fabricks-mortar.toml.
+       Up(MortarUpArgs),
+       /// Stop all services defined in fabricks-mortar.toml.
+       Down(MortarDownArgs),
+       /// Show status of services.
+       Ps(MortarPsArgs),
+       /// Restart services.
+       Restart(MortarRestartArgs),
+       /// View logs from all services.
+       Logs(MortarLogsArgs),
+   }
+```
+
+### Example Fabrickfile for Testing
+
+Create `examples/hello-world/Fabrickfile`:
+```toml
+[service]
+name = "hello-world"
+version = "1.0.0"
+description = "Simple hello world WASM service"
+
+[build]
+command = "cargo build --target wasm32-wasi --release"
+output = "target/wasm32-wasi/release/hello_world.wasm"
+
+[runtime]
+engine = "wasmtime"
+
+[capabilities]
+# Minimal capabilities for hello world
+```
+
+Create `examples/hello-world/src/main.rs`:
+```rust
+fn main() {
+    println!("Hello from Fabricks!");
+}
+```
+
+### Example Mortar File for Testing
+
+Create `examples/web-app/fabricks-mortar.toml`:
+```toml
+mortar_version = "1.0"
+
+[project]
+name = "web-app-example"
+description = "Example web application with API and worker"
+
+[service.api]
+fabrickfile = "./api/Fabrickfile"
+replicas = { min = 1, max = 3 }
+
+[service.worker]
+fabrickfile = "./worker/Fabrickfile"
+replicas = { min = 1, max = 2 }
+depends_on = ["api"]
+```
+
 ### Success Criteria
 
-- [x] Can create service via API
-- [x] Can start/stop service
-- [x] Can scale service up/down
-- [x] Dependency resolution works
-- [x] State persists across daemon restarts
-- [x] Events published correctly
+#### Daemon API
+- [ ] `POST /v1/services` creates a service from Fabrickfile
+- [ ] `GET /v1/services` lists all running services
+- [ ] `GET /v1/services/:id` returns service details
+- [ ] `POST /v1/services/:id/stop` stops a service
+- [ ] `DELETE /v1/services/:id` removes a service
+- [ ] `GET /v1/services/:id/logs` returns service logs
+- [ ] Dependency resolution prevents circular dependencies
+- [ ] State persists across daemon restarts
+- [ ] Events published for all service lifecycle changes
+
+#### CLI Commands (End-to-End)
+- [ ] `fabricks run ./examples/hello-world` starts service via daemon
+- [ ] `fabricks service ls` shows running services
+- [ ] `fabricks service logs <id>` shows service output
+- [ ] `fabricks service stop <id>` stops a service
+- [ ] `fabricks service rm <id>` removes a service
+- [ ] `fabricks mortar up` starts all services from mortar file
+- [ ] `fabricks mortar ps` shows project service status
+- [ ] `fabricks mortar down` stops all project services
+
+#### Integration Tests
+- [ ] Build and run hello-world example end-to-end
+- [ ] Build and run web-app mortar example end-to-end
+- [ ] Service logs are captured and retrievable
+- [ ] Daemon restart preserves service state
+- [ ] CLI provides clear errors when daemon not running
 
 ---
 

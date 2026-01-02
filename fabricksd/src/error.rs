@@ -79,6 +79,59 @@ pub enum DaemonError {
     /// Event bus send error.
     #[error("failed to publish event: channel closed")]
     EventBusClosed,
+
+    /// Circular dependency detected.
+    #[error("circular dependency detected in service graph")]
+    CircularDependency,
+
+    /// Runtime error.
+    #[error("runtime error: {0}")]
+    RuntimeError(#[from] fabricks_runtime::RuntimeError),
+
+    /// Fabrickfile parse error.
+    #[error("failed to parse Fabrickfile: {0}")]
+    FabrickfileParseError(String),
+
+    /// Build error.
+    #[error("build failed: {0}")]
+    BuildError(String),
+
+    /// Service already exists.
+    #[error("service already exists: {name}")]
+    ServiceAlreadyExists {
+        /// Service name.
+        name: String,
+    },
+
+    /// Service is not running.
+    #[error("service is not running: {id}")]
+    ServiceNotRunning {
+        /// Service ID.
+        id: String,
+    },
+
+    /// Mortar project not found.
+    #[error("mortar project not found: {name}")]
+    MortarProjectNotFound {
+        /// Project name.
+        name: String,
+    },
+
+    /// Dependency not found.
+    #[error("dependency not found: service '{service}' depends on '{dependency}' which does not exist")]
+    DependencyNotFound {
+        /// Service name.
+        service: String,
+        /// Missing dependency.
+        dependency: String,
+    },
+
+    /// WASM module not found.
+    #[error("WASM module not found at path: {path}")]
+    WasmModuleNotFound {
+        /// Path to the WASM file.
+        path: String,
+    },
 }
 
 /// Result type for daemon operations.

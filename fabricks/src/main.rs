@@ -13,6 +13,9 @@
 //! - `fabricks login` - Authenticate with a registry
 //! - `fabricks logout` - Remove registry credentials
 //! - `fabricks version` - Show version information
+//! - `fabricks daemon` - Daemon management commands
+//! - `fabricks service` - Service management commands
+//! - `fabricks mortar` - Mortar project commands
 
 use std::process::ExitCode;
 
@@ -55,6 +58,8 @@ fn main() -> ExitCode {
         Commands::Logout(args) => commands::logout::run(&args),
         Commands::Version => commands::version::run(),
         Commands::Daemon(args) => rt.block_on(commands::daemon::run(&args)),
+        Commands::Service(args) => rt.block_on(commands::service::run(&args)),
+        Commands::Mortar(args) => rt.block_on(commands::mortar::run(&args)),
     };
 
     match result {

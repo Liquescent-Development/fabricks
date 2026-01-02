@@ -1,6 +1,6 @@
 //! Run command implementation.
 //!
-//! Executes a WASM module locally with capability enforcement.
+//! Executes a WASM module through the daemon (default) or locally.
 
 use std::path::Path;
 
@@ -11,7 +11,8 @@ use fabricks_runtime::{Runtime, RuntimeConfig};
 use tracing::{debug, info};
 
 use crate::cli::RunArgs;
-use crate::output::writeln_stderr;
+use crate::daemon_client::{DaemonClient, RunFabrickfileRequest};
+use crate::output::{writeln, writeln_stderr};
 
 /// Run the run command.
 ///
@@ -21,6 +22,76 @@ use crate::output::writeln_stderr;
 /// - The module cannot be found or loaded
 /// - The module execution fails
 pub async fn run(args: &RunArgs) -> Result<()> {
+    // Check if we're pointing to a directory with a Fabrickfile or to a Fabrickfile directly
+    if is_fabrickfile_reference(&args.module) {
+        return run_via_daemon(&args.module).await;
+    }
+
+    // Otherwise, fall back to local execution
+    run_locally(args).await
+}
+
+/// Checks if the reference points to a Fabrickfile.
+fn is_fabrickfile_reference(reference: &str) -> bool {
+    let path = Path::new(reference);
+
+    // Direct path to a Fabrickfile
+    if path.is_file()
+        && path
+            .file_name()
+            .is_some_and(|n| n == "Fabrickfile")
+    {
+        return true;
+    }
+
+    // Directory containing a Fabrickfile
+    if path.is_dir() && path.join("Fabrickfile").exists() {
+        return true;
+    }
+
+    false
+}
+
+/// Run a Fabrickfile through the daemon.
+async fn run_via_daemon(reference: &str) -> Result<()> {
+    let path = Path::new(reference);
+
+    // Resolve the Fabrickfile path
+    let fabrickfile_path = if path.is_dir() {
+        path.join("Fabrickfile")
+    } else {
+        path.to_path_buf()
+    };
+
+    // Canonicalize the path
+    let absolute_path = fabrickfile_path
+        .canonicalize()
+        .with_context(|| format!("Failed to resolve path: {}", fabrickfile_path.display()))?;
+
+    writeln_stderr(&format!(
+        "Running {} via daemon...",
+        fabrickfile_path.display()
+    ))?;
+
+    let client = DaemonClient::new();
+
+    let response = client
+        .run_fabrickfile(RunFabrickfileRequest {
+            fabrickfile_path: absolute_path,
+            wasm_path: None,
+        })
+        .await?;
+
+    writeln(&format!(
+        "Service '{}' started with ID: {}",
+        response.name, response.id
+    ))?;
+
+    Ok(())
+}
+
+/// Run a module locally (fallback for direct WASM files).
+async fn run_locally(args: &RunArgs) -> Result<()> {
     // Load the module
     let (fabrickfile, wasm_bytes) = load_module(&args.module).await?;
 

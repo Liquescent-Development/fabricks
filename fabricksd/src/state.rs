@@ -4,11 +4,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use sled::Db;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, RwLock};
 
 use crate::config::DaemonConfig;
 use crate::error::Result;
 use crate::events::EventBus;
+use crate::service::ServiceManager;
 use crate::store::StateStore;
 
 /// Shared daemon state accessible from all handlers.
@@ -32,6 +33,9 @@ pub struct AppState {
     /// Event bus for publishing events.
     pub event_bus: Arc<EventBus>,
 
+    /// Service manager for service lifecycle.
+    pub service_manager: Arc<RwLock<ServiceManager>>,
+
     /// Shutdown signal sender.
     shutdown_tx: broadcast::Sender<()>,
 }
@@ -39,7 +43,7 @@ pub struct AppState {
 impl AppState {
     /// Creates a new application state.
     ///
-    /// This initializes the database, state store, and event bus.
+    /// This initializes the database, state store, event bus, and service manager.
     ///
     /// # Errors
     ///
@@ -63,6 +67,14 @@ impl AppState {
             config.events.history_size,
         ));
 
+        // Create service manager
+        let service_manager = ServiceManager::new(
+            Arc::clone(&store),
+            Arc::clone(&event_bus),
+            config.runtime.max_cached_modules,
+        )?;
+        let service_manager = Arc::new(RwLock::new(service_manager));
+
         // Create shutdown channel
         let (shutdown_tx, _) = broadcast::channel(1);
 
@@ -72,6 +84,7 @@ impl AppState {
             db,
             store,
             event_bus,
+            service_manager,
             shutdown_tx,
         })
     }
@@ -132,6 +145,7 @@ mod tests {
         assert!(Arc::ptr_eq(&state.db, &cloned.db));
         assert!(Arc::ptr_eq(&state.store, &cloned.store));
         assert!(Arc::ptr_eq(&state.event_bus, &cloned.event_bus));
+        assert!(Arc::ptr_eq(&state.service_manager, &cloned.service_manager));
     }
 
     #[tokio::test]

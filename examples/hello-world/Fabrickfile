@@ -15,8 +15,8 @@ source = "rust"
 path = "."
 
 [build]
-command = "cargo build --target wasm32-wasi --release"
-output = "target/wasm32-wasi/release/hello_world.wasm"
+command = "cargo build --target wasm32-wasip2 --release"
+output = "target/wasm32-wasip2/release/hello-world.wasm"
 
 [capabilities.network]
 listen = [8080]

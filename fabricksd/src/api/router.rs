@@ -1,6 +1,9 @@
 //! Axum router configuration.
 
-use axum::{routing::get, Router};
+use axum::{
+    routing::{delete, get, post},
+    Router,
+};
 use tower_http::trace::TraceLayer;
 
 use super::handlers;
@@ -15,6 +18,41 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/daemon/info", get(handlers::daemon::daemon_info))
         // Simple health check for liveness probes
         .route("/v1/health", get(health_check))
+        // Service management
+        .route("/v1/services", get(handlers::services::list_services))
+        .route("/v1/services", post(handlers::services::create_service))
+        .route("/v1/services/run", post(handlers::services::run_fabrickfile))
+        .route("/v1/services/{id}", get(handlers::services::get_service))
+        .route(
+            "/v1/services/{id}",
+            delete(handlers::services::delete_service),
+        )
+        .route(
+            "/v1/services/{id}/start",
+            post(handlers::services::start_service),
+        )
+        .route(
+            "/v1/services/{id}/stop",
+            post(handlers::services::stop_service),
+        )
+        .route(
+            "/v1/services/{id}/scale",
+            post(handlers::services::scale_service),
+        )
+        // Mortar project management
+        .route("/v1/mortar/deploy", post(handlers::mortar::deploy_mortar))
+        .route(
+            "/v1/mortar/projects",
+            get(handlers::mortar::list_projects),
+        )
+        .route(
+            "/v1/mortar/projects/{name}",
+            get(handlers::mortar::get_project_services),
+        )
+        .route(
+            "/v1/mortar/projects/{name}",
+            delete(handlers::mortar::teardown_mortar),
+        )
         // Add state
         .with_state(state)
         // Add tracing layer for request/response logging
