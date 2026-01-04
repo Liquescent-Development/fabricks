@@ -12,12 +12,17 @@
 //! - [`events`] - Event bus for pub/sub messaging
 //! - [`api`] - HTTP API server and handlers
 //! - [`service`] - Service lifecycle management
+//! - [`network`] - Network isolation and service discovery
+//! - [`proxy`] - HTTP proxy for routing to WASM services
 //! - [`shutdown`] - Graceful shutdown coordination
 
 pub mod api;
 pub mod config;
 pub mod error;
 pub mod events;
+pub mod health;
+pub mod network;
+pub mod proxy;
 pub mod service;
 pub mod shutdown;
 pub mod state;
@@ -27,6 +32,9 @@ pub mod store;
 pub use config::DaemonConfig;
 pub use error::{DaemonError, Result};
 pub use events::{Event, EventBus, EventType};
+pub use health::{HealthMonitor, HealthMonitorConfig, HealthStatus, ServiceHealth};
+pub use network::{NetworkConfig, NetworkManager, ServiceRegistry};
+pub use proxy::{EgressProxy, EgressRequest, EgressResponse, ProxyServer, ServiceRouter};
 pub use service::{ServiceConfig, ServiceInfo, ServiceManager};
 pub use state::AppState;
 pub use store::StateStore;

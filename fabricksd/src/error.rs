@@ -50,11 +50,16 @@ pub enum DaemonError {
     },
 
     /// Network not found.
-    #[error("network not found: {id}")]
-    NetworkNotFound {
-        /// Network ID.
-        id: String,
-    },
+    #[error("network not found: {0}")]
+    NetworkNotFound(String),
+
+    /// Network already exists.
+    #[error("network already exists with name: {0}")]
+    NetworkExists(String),
+
+    /// Network has members and cannot be deleted.
+    #[error("network '{0}' has members and cannot be deleted")]
+    NetworkHasMembers(String),
 
     /// Volume not found.
     #[error("volume not found: {id}")]
@@ -131,6 +136,47 @@ pub enum DaemonError {
     WasmModuleNotFound {
         /// Path to the WASM file.
         path: String,
+    },
+
+    /// Port already bound.
+    #[error("port {port} is already bound to service '{service_id}'")]
+    PortAlreadyBound {
+        /// Port number.
+        port: u16,
+        /// Service ID currently bound.
+        service_id: String,
+    },
+
+    /// Port not bound.
+    #[error("port {port} is not bound to any service")]
+    PortNotBound {
+        /// Port number.
+        port: u16,
+    },
+
+    /// Failed to bind port.
+    #[error("failed to bind port {port}: {reason}")]
+    PortBindError {
+        /// Port number.
+        port: u16,
+        /// Reason for the failure.
+        reason: String,
+    },
+
+    /// No instances available for routing.
+    #[error("no healthy instances available for service '{service_id}'")]
+    NoInstancesAvailable {
+        /// Service ID.
+        service_id: String,
+    },
+
+    /// Generic service error.
+    #[error("service '{id}' error: {reason}")]
+    ServiceError {
+        /// Service ID.
+        id: String,
+        /// Error reason.
+        reason: String,
     },
 }
 

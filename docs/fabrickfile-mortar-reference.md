@@ -49,6 +49,12 @@ name = "product-service"
 # Required: Semantic version
 version = "2.1.0"
 
+# Required: Service type - determines execution model and WASI interface
+# "command" = CLI that runs to completion (wasi:cli/run) - default
+# "http"    = HTTP handler that processes requests (wasi:http/incoming-handler)
+# "tcp"     = TCP socket server for protocols like Redis/Postgres (wasi:sockets) - future
+type = "http"
+
 # Optional: Human-readable description
 description = "Product catalog service for e-commerce platform"
 
@@ -385,6 +391,17 @@ Metadata about the fabrick.
 - **Type:** String
 - **Format:** Semantic versioning (MAJOR.MINOR.PATCH)
 - **Example:** `version = "2.1.0"`
+
+#### `type` (Required)
+- **Type:** String
+- **Values:** `"command"` | `"http"` | `"tcp"` (tcp is future)
+- **Default:** `"command"` (for backward compatibility)
+- **Purpose:** Determines execution model and WASI interface
+- **Details:**
+  - `"command"` - Uses `wasi:cli/run`, runs to completion, exits
+  - `"http"` - Uses `wasi:http/incoming-handler`, daemon routes HTTP requests to handler
+  - `"tcp"` - Uses `wasi:sockets`, daemon forwards raw TCP connections (future)
+- **Example:** `type = "http"`
 
 #### `description` (Optional)
 - **Type:** String
@@ -786,13 +803,14 @@ scan_vulnerabilities = true   # Check for known CVEs
 
 ## Fabrickfile Quick Start Examples
 
-### Minimal Fabrickfile (Rust)
+### Minimal Fabrickfile (Rust HTTP Service)
 ```toml
 fabrick_version = "1.0"
 
 [info]
 name = "my-service"
 version = "1.0.0"
+type = "http"  # HTTP handler service
 
 [from]
 source = "rust"
@@ -808,13 +826,14 @@ output = "target/wasm32-wasi/release/my_service.wasm"
 listen = [8080]
 ```
 
-### Minimal Fabrickfile (Pre-built Image)
+### Minimal Fabrickfile (Pre-built Image - TCP Service)
 ```toml
 fabrick_version = "1.0"
 
 [info]
 name = "redis-cache"
 version = "1.0.0"
+type = "tcp"  # TCP socket server (Redis protocol)
 
 [from]
 image = "wasm://redis:7.2"
@@ -826,13 +845,14 @@ listen = [6379]
 read_write = ["./data"]
 ```
 
-### Minimal Fabrickfile (JavaScript)
+### Minimal Fabrickfile (JavaScript HTTP Service)
 ```toml
 fabrick_version = "1.0"
 
 [info]
 name = "api-gateway"
 version = "1.0.0"
+type = "http"  # HTTP handler service
 
 [from]
 source = "javascript"
@@ -850,6 +870,32 @@ output = "dist/api.wasm"
 [capabilities.network]
 listen = [3000]
 connect = ["backend:8080"]
+```
+
+### Minimal Fabrickfile (Command/CLI Tool)
+```toml
+fabrick_version = "1.0"
+
+[info]
+name = "data-migrator"
+version = "1.0.0"
+type = "command"  # Runs to completion (default)
+
+[from]
+source = "rust"
+
+[source]
+path = "."
+
+[build]
+command = "cargo build --target wasm32-wasi --release"
+output = "target/wasm32-wasi/release/migrator.wasm"
+
+[capabilities]
+env = ["DATABASE_URL"]
+
+[capabilities.network]
+connect = ["postgres:5432"]
 ```
 
 ---

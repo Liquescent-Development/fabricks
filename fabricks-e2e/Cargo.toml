@@ -1,0 +1,37 @@
+[package]
+name = "fabricks-e2e"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "End-to-end tests for Fabricks"
+publish = false
+
+[dependencies]
+fabricks-common = { path = "../fabricks-common" }
+fabricks-runtime = { path = "../fabricks-runtime" }
+fabricksd = { path = "../fabricksd" }
+anyhow.workspace = true
+bytes.workspace = true
+tempfile = "3.14"
+tokio = { workspace = true, features = ["full", "test-util"] }
+tracing.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true
+serde.workspace = true
+tokio-test = "0.4"
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+hyper.workspace = true
+http-body-util.workspace = true
+
+[[test]]
+name = "daemon_api"
+path = "tests/daemon_api.rs"
+
+[[test]]
+name = "http_service"
+path = "tests/http_service.rs"

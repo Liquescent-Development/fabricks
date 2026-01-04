@@ -54,6 +54,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create application state
     let state = AppState::new(config.clone())?;
+    state.initialize().await?;
     info!("Initialized state");
 
     // Publish startup event

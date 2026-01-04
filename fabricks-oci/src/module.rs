@@ -177,6 +177,7 @@ mod tests {
             info: Info {
                 name: "test-module".to_string(),
                 version: "1.0.0".to_string(),
+                service_type: fabricks_common::models::fabrickfile::ServiceType::default(),
                 description: Some("A test module".to_string()),
                 authors: Some(vec!["Test Author".to_string()]),
                 license: Some("MIT".to_string()),

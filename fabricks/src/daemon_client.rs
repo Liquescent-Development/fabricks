@@ -116,8 +116,68 @@ pub struct ListServicesResponse {
     pub total: usize,
 }
 
+/// Detailed service information.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct ServiceDetail {
+    /// Service ID.
+    pub id: String,
+    /// Service name.
+    pub name: String,
+    /// Service version.
+    pub version: String,
+    /// Current state.
+    pub state: String,
+    /// Replica information.
+    pub replicas: ReplicaState,
+    /// Service configuration.
+    pub config: ServiceConfigDetail,
+    /// When the service was created.
+    pub created_at: String,
+    /// When the service was last updated.
+    pub updated_at: String,
+    /// Last error message.
+    #[serde(default)]
+    pub last_error: Option<String>,
+    /// Running instances.
+    #[serde(default)]
+    pub instances: Vec<InstanceInfo>,
+}
+
+/// Service configuration details.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct ServiceConfigDetail {
+    /// Service name.
+    pub name: String,
+    /// Service version.
+    pub version: String,
+    /// Service type.
+    pub service_type: String,
+    /// Path to WASM module.
+    pub wasm_path: String,
+    /// WASM digest.
+    pub wasm_digest: String,
+    /// Networks.
+    #[serde(default)]
+    pub networks: Vec<String>,
+    /// Mortar project.
+    #[serde(default)]
+    pub mortar_project: Option<String>,
+}
+
+/// Instance information.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct InstanceInfo {
+    /// Instance ID.
+    pub id: String,
+    /// Instance state.
+    pub state: String,
+    /// When started.
+    #[serde(default)]
+    pub started_at: Option<String>,
+}
+
 /// Create service response.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct CreateServiceResponse {
     /// Created service ID.
     pub id: String,
@@ -210,6 +270,11 @@ impl DaemonClient {
     /// Lists all services.
     pub async fn list_services(&self) -> Result<ListServicesResponse> {
         self.get("/v1/services").await
+    }
+
+    /// Gets details about a specific service.
+    pub async fn get_service(&self, id: &str) -> Result<ServiceDetail> {
+        self.get(&format!("/v1/services/{id}")).await
     }
 
     /// Runs a Fabrickfile through the daemon.

@@ -142,6 +142,7 @@ mod tests {
         ServiceConfig {
             name: name.to_string(),
             version: "1.0.0".to_string(),
+            service_type: Default::default(),
             wasm_path: PathBuf::from("/tmp/test.wasm"),
             wasm_digest: "sha256:test".to_string(),
             capabilities: Default::default(),

@@ -26,20 +26,58 @@ Fabricks is a next-generation orchestration platform for WebAssembly (WASM) micr
 
 ## Quick Start
 
-### Install Fabricks
+### Build from Source
+
 ```bash
-curl -fsSL https://get.fabricks.dev | sh
+# Clone the repository
+git clone https://github.com/Liquescent-Development/fabricks.git
+cd fabricks
+
+# Build all crates
+cargo build --release
+
+# Install cargo-component for building WASM HTTP services
+cargo install cargo-component
 ```
 
-### Create Your First Fabrick
-```bash
-# Initialize a new project
-fabricks init --template rust --name my-api
-cd my-api
+### Run the Hello HTTP Example
 
-# Start development mode with hot reload
-fabricks dev
+**1. Start the daemon (in a separate terminal):**
+
+```bash
+./target/release/fabricksd
 ```
+
+**2. Build and deploy the example service:**
+
+```bash
+# Build the WASM component
+cd examples/hello-http
+cargo component build --release
+cd ../..
+
+# Deploy via CLI
+./target/release/fabricks service run examples/hello-http
+```
+
+**3. Test it:**
+
+```bash
+curl http://localhost:8080/
+# Response: Hello from Fabricks!
+```
+
+**4. Manage the service:**
+
+```bash
+# List services
+./target/release/fabricks service ls
+
+# Stop the service
+./target/release/fabricks service stop <service-id>
+```
+
+### Create Your Own Service
 
 **Fabrickfile:**
 ```toml
@@ -322,22 +360,28 @@ fabricks pull wasm://redis:7.2
 
 ## Project Status
 
-🚧 **Fabricks is currently in the design phase.** 🚧
+**Fabricks is in active development.**
 
-We have completed:
-- ✅ Comprehensive specification documents
-- ✅ File format design (Fabrickfile, fabricks-mortar.toml)
-- ✅ CLI command design
-- ✅ Daemon API specification
-- ✅ OCI registry integration specification
+**Implemented:**
+- ✅ Core WASM runtime (Wasmtime integration)
+- ✅ HTTP service support (`wasi:http/incoming-handler`)
+- ✅ CLI tool (`fabricks`)
+- ✅ Daemon (`fabricksd`) with REST API
+- ✅ Service management (create, start, stop, scale, delete)
+- ✅ Network management and port binding
+- ✅ Fabrickfile and mortar file parsing
+- ✅ OCI registry client
+- ✅ Health monitoring infrastructure
 
-**Next Steps:**
-1. Implement core runtime (Wasmtime integration)
-2. Build CLI tool
-3. Implement daemon (fabricksd)
-4. Develop registry client
-5. Create Kubernetes operator
-6. Build example applications
+**In Progress:**
+- 🔄 Auto-scaling
+- 🔄 Policy engine
+- 🔄 Volume management
+
+**Planned:**
+- ⏳ Kubernetes operator
+- ⏳ SpinKube manifest generation
+- ⏳ Public registry (registry.fabricks.dev)
 
 ---
 
@@ -402,13 +446,11 @@ ls docs/
 
 ## Examples
 
-Check out the `/examples` directory for complete applications:
+Check out the `/examples` directory for working examples:
 
-- **[Hello World](examples/hello-world/)** - Minimal Fabrickfile
-- **[Multi-Service API](examples/multi-service-api/)** - REST API with database
-- **[E-Commerce Platform](examples/e-commerce/)** - Complete microservices application
-- **[PCI-Compliant Payment](examples/payment-service/)** - Isolated payment processing
-- **[Monitoring Stack](examples/monitoring/)** - Prometheus + Grafana
+- **[hello-http](examples/hello-http/)** - HTTP service using `wasi:http/incoming-handler`
+
+See `examples/README.md` for detailed instructions on building and running examples
 
 ---
 

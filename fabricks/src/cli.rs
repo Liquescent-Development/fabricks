@@ -303,6 +303,34 @@ pub enum ServiceCommands {
         format: OutputFormat,
     },
 
+    /// Deploy and start a service from a Fabrickfile.
+    ///
+    /// Creates the service and starts it immediately.
+    Run {
+        /// Path to the Fabrickfile or directory containing one.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Path to pre-built WASM module (skips build step).
+        #[arg(long)]
+        wasm: Option<PathBuf>,
+
+        /// Output format.
+        #[arg(short, long, value_enum, default_value = "text")]
+        format: OutputFormat,
+    },
+
+    /// Get detailed information about a service.
+    #[command(name = "inspect", alias = "get")]
+    Inspect {
+        /// Service ID or name.
+        id: String,
+
+        /// Output format.
+        #[arg(short, long, value_enum, default_value = "text")]
+        format: OutputFormat,
+    },
+
     /// Start a service.
     Start {
         /// Service ID.

@@ -1,0 +1,5 @@
+package component:hello-http;
+
+world hello-http {
+    include wasi:http/proxy@0.2.9;
+}

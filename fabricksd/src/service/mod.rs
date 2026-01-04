@@ -49,7 +49,7 @@ pub mod manager;
 pub mod types;
 
 // Re-export main types
-pub use handle::ServiceHandle;
+pub use handle::{CapabilityOutboundHandler, ServiceHandle};
 pub use manager::ServiceManager;
 pub use types::{
     generate_instance_id, generate_service_id, Instance, InstanceState, ReplicaState,

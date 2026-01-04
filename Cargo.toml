@@ -9,7 +9,10 @@ members = [
     "fabricks-common",
     "fabricks-oci",
     "fabricks-runtime",
+    "fabricks-e2e",
 ]
+# Examples that use cargo-component (must be built separately)
+exclude = ["examples/hello-http"]
 
 [workspace.package]
 edition = "2024"
@@ -69,6 +72,7 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-feature
 # WASM runtime
 wasmtime = "29"
 wasmtime-wasi = "29"
+wasmtime-wasi-http = "29"
 
 # Database (embedded)
 sled = "0.34"

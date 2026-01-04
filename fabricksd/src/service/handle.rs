@@ -2,6 +2,9 @@
 //!
 //! A `ServiceHandle` manages the lifecycle of individual WASM instances for a service,
 //! including spawning, scaling, and stopping instances.
+//!
+//! For HTTP services, the handle also manages port bindings via the proxy server
+//! and maintains an `HttpRuntime` for handling incoming requests.
 
 use std::sync::Arc;
 
@@ -9,13 +12,38 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
-use fabricks_runtime::{Runtime, RuntimeConfig, RuntimePool};
+use fabricks_runtime::http::{HttpRuntime, HttpRuntimeConfig, OutboundHandler};
+use fabricks_runtime::{HttpRequest, HttpResponse, Runtime, RuntimeConfig, RuntimePool};
 
 use crate::error::{DaemonError, Result};
+use crate::proxy::SharedProxyServer;
 
-use super::types::{
-    Instance, InstanceState, ServiceConfig, ServiceDetail, ServiceState, State,
-};
+use fabricks_common::Capabilities;
+
+use super::types::{Instance, InstanceState, ServiceConfig, ServiceDetail, ServiceState, State};
+
+/// Outbound handler that validates connections based on service capabilities.
+///
+/// This checks if the service has the `connect` capability for the target host:port.
+pub struct CapabilityOutboundHandler {
+    /// Service capabilities.
+    capabilities: Capabilities,
+}
+
+impl CapabilityOutboundHandler {
+    /// Creates a new capability-based outbound handler.
+    #[must_use]
+    pub fn new(capabilities: Capabilities) -> Self {
+        Self { capabilities }
+    }
+}
+
+impl OutboundHandler for CapabilityOutboundHandler {
+    fn is_allowed(&self, host: &str, port: u16) -> fabricks_runtime::error::Result<bool> {
+        let target = format!("{host}:{port}");
+        Ok(self.capabilities.can_connect(&target))
+    }
+}
 
 /// Handle for managing a running service and its instances.
 pub struct ServiceHandle {
@@ -30,6 +58,18 @@ pub struct ServiceHandle {
 
     /// Cached WASM bytes.
     wasm_bytes: Arc<Vec<u8>>,
+
+    /// Proxy server for port bindings (HTTP/TCP services).
+    proxy_server: Option<SharedProxyServer>,
+
+    /// Ports bound for this service.
+    bound_ports: Mutex<Vec<u16>>,
+
+    /// HTTP runtime for handling incoming requests (HTTP services only).
+    http_runtime: RwLock<Option<Arc<HttpRuntime>>>,
+
+    /// Outbound handler for validating outbound HTTP requests.
+    outbound_handler: RwLock<Option<Arc<dyn OutboundHandler>>>,
 }
 
 /// Handle for a running instance.
@@ -49,17 +89,27 @@ impl ServiceHandle {
     /// * `config` - Service configuration
     /// * `runtime_pool` - Pool for creating WASM runtimes
     /// * `wasm_bytes` - The WASM module bytes
+    /// * `proxy_server` - Optional proxy server for HTTP/TCP port bindings
     ///
     /// # Returns
     ///
     /// A new service handle in the Creating state.
-    pub fn new(config: ServiceConfig, runtime_pool: Arc<RuntimePool>, wasm_bytes: Vec<u8>) -> Self {
+    pub fn new(
+        config: ServiceConfig,
+        runtime_pool: Arc<RuntimePool>,
+        wasm_bytes: Vec<u8>,
+        proxy_server: Option<SharedProxyServer>,
+    ) -> Self {
         let state = ServiceState::new(config);
         Self {
             state: RwLock::new(state),
             instances: Mutex::new(Vec::new()),
             runtime_pool,
             wasm_bytes: Arc::new(wasm_bytes),
+            proxy_server,
+            bound_ports: Mutex::new(Vec::new()),
+            http_runtime: RwLock::new(None),
+            outbound_handler: RwLock::new(None),
         }
     }
 
@@ -68,12 +118,17 @@ impl ServiceHandle {
         state: ServiceState,
         runtime_pool: Arc<RuntimePool>,
         wasm_bytes: Vec<u8>,
+        proxy_server: Option<SharedProxyServer>,
     ) -> Self {
         Self {
             state: RwLock::new(state),
             instances: Mutex::new(Vec::new()),
             runtime_pool,
             wasm_bytes: Arc::new(wasm_bytes),
+            proxy_server,
+            bound_ports: Mutex::new(Vec::new()),
+            http_runtime: RwLock::new(None),
+            outbound_handler: RwLock::new(None),
         }
     }
 
@@ -122,15 +177,96 @@ impl ServiceHandle {
         }
     }
 
+    /// Sets the outbound handler for HTTP services.
+    ///
+    /// This handler is used to validate outbound requests from the WASM module.
+    pub async fn set_outbound_handler(&self, handler: Arc<dyn OutboundHandler>) {
+        let mut guard = self.outbound_handler.write().await;
+        *guard = Some(handler);
+    }
+
+    /// Handles an incoming HTTP request (HTTP services only).
+    ///
+    /// This routes the request to the WASM component's `wasi:http/incoming-handler`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The service is not an HTTP service
+    /// - The HTTP runtime is not initialized
+    /// - Request handling fails
+    pub async fn handle_http_request(&self, request: HttpRequest) -> Result<HttpResponse> {
+        let runtime_guard = self.http_runtime.read().await;
+        let runtime = runtime_guard.as_ref().ok_or_else(|| {
+            DaemonError::ServiceError {
+                id: String::new(), // ID will be filled in by caller
+                reason: "HTTP runtime not initialized".to_string(),
+            }
+        })?;
+
+        let outbound_guard = self.outbound_handler.read().await;
+        let outbound_handler = outbound_guard.as_ref().ok_or_else(|| {
+            DaemonError::ServiceError {
+                id: String::new(),
+                reason: "Outbound handler not configured".to_string(),
+            }
+        })?;
+
+        runtime
+            .handle_request(request, Arc::clone(outbound_handler))
+            .await
+            .map_err(|e| DaemonError::ServiceError {
+                id: String::new(),
+                reason: e.to_string(),
+            })
+    }
+
+    /// Creates the HTTP runtime for this service.
+    ///
+    /// Called during `start()` for HTTP services. Also sets up the outbound handler
+    /// for validating outbound connections.
+    async fn create_http_runtime(&self) -> Result<()> {
+        let state = self.state.read().await;
+        let capabilities = state.config.capabilities.clone();
+        drop(state);
+
+        let config = HttpRuntimeConfig {
+            capabilities: capabilities.clone(),
+            args: Vec::new(),
+            fuel_limit: None,
+            epoch_interruption: false,
+        };
+
+        let runtime = HttpRuntime::new(&self.wasm_bytes, config).map_err(|e| {
+            DaemonError::ServiceError {
+                id: String::new(),
+                reason: format!("Failed to create HTTP runtime: {e}"),
+            }
+        })?;
+
+        let mut runtime_guard = self.http_runtime.write().await;
+        *runtime_guard = Some(Arc::new(runtime));
+
+        // Create and set the outbound handler
+        let outbound_handler = Arc::new(CapabilityOutboundHandler::new(capabilities));
+        let mut handler_guard = self.outbound_handler.write().await;
+        *handler_guard = Some(outbound_handler);
+
+        debug!("Created HTTP runtime and outbound handler for service");
+
+        Ok(())
+    }
+
     /// Starts the service.
     ///
-    /// Spawns the minimum number of replicas defined in the configuration.
+    /// For command services, spawns the minimum number of replicas.
+    /// For HTTP/TCP services, binds the configured listening ports.
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - The service is not in a startable state
-    /// - Instance spawning fails
+    /// - Instance spawning or port binding fails
     pub async fn start(&self) -> Result<()> {
         let mut state = self.state.write().await;
 
@@ -143,55 +279,94 @@ impl ServiceHandle {
 
         state.set_state(State::Starting);
         let service_id = state.id.clone();
+        let service_name = state.name.clone();
+        let service_type = state.config.service_type;
         let desired_replicas = state.config.replicas.min as usize;
         state.replicas.desired = desired_replicas;
 
-        // Drop state lock before spawning
+        // Get listen ports from capabilities for HTTP/TCP services
+        let listen_ports: Vec<u16> = state
+            .config
+            .capabilities
+            .network
+            .as_ref()
+            .and_then(|n| n.listen.clone())
+            .unwrap_or_default();
+
+        // Drop state lock before operations
         drop(state);
 
-        info!(service_id = %service_id, replicas = desired_replicas, "Starting service");
+        info!(
+            service_id = %service_id,
+            service_type = %service_type,
+            replicas = desired_replicas,
+            "Starting service"
+        );
 
-        // Spawn instances
-        let mut spawn_errors = Vec::new();
-        for i in 0..desired_replicas {
-            match self.spawn_instance().await {
-                Ok(()) => {
-                    debug!(service_id = %service_id, instance = i, "Spawned instance");
-                }
-                Err(e) => {
-                    error!(service_id = %service_id, instance = i, error = %e, "Failed to spawn instance");
-                    spawn_errors.push(e);
+        // Bind ports for HTTP/TCP services
+        if service_type.is_http() || service_type.is_tcp() {
+            self.bind_service_ports(&service_id, &service_name, &listen_ports)
+                .await?;
+        }
+
+        // Create HTTP runtime for HTTP services
+        if service_type.is_http() {
+            if let Err(e) = self.create_http_runtime().await {
+                error!(service_id = %service_id, error = %e, "Failed to create HTTP runtime");
+                self.unbind_service_ports().await;
+                return Err(e);
+            }
+            info!(service_id = %service_id, "Created HTTP runtime");
+        }
+
+        // Spawn instances for command services
+        if service_type.is_command() {
+            let spawn_errors = self.spawn_command_instances(&service_id, desired_replicas).await;
+
+            // Update state based on spawn results
+            let mut state = self.state.write().await;
+            let instances = self.instances.lock().await;
+            let running_count = instances
+                .iter()
+                .filter(|h| h.instance.state == InstanceState::Running)
+                .count();
+
+            state.replicas.running = running_count;
+            state.replicas.ready = running_count;
+            state.replicas.failed = spawn_errors.len();
+
+            if running_count == 0 && !spawn_errors.is_empty() {
+                state.set_state(State::Failed);
+                state.set_error(format!("All instances failed to start: {spawn_errors:?}"));
+                // Unbind any ports we may have bound
+                self.unbind_service_ports().await;
+                // Return the first error - we know spawn_errors is not empty from the condition
+                if let Some(first_error) = spawn_errors.into_iter().next() {
+                    return Err(first_error);
                 }
             }
+
+            state.set_state(State::Running);
+            info!(service_id = %state.id, running = running_count, "Service started");
+        } else {
+            // For HTTP/TCP services, we're "running" once ports are bound
+            let mut state = self.state.write().await;
+            state.replicas.running = 1;
+            state.replicas.ready = 1;
+            state.set_state(State::Running);
+            info!(
+                service_id = %state.id,
+                ports = ?listen_ports,
+                "HTTP/TCP service started"
+            );
         }
-
-        // Update state based on spawn results
-        let mut state = self.state.write().await;
-        let instances = self.instances.lock().await;
-        let running_count = instances
-            .iter()
-            .filter(|h| h.instance.state == InstanceState::Running)
-            .count();
-
-        state.replicas.running = running_count;
-        state.replicas.ready = running_count;
-        state.replicas.failed = spawn_errors.len();
-
-        if running_count == 0 && !spawn_errors.is_empty() {
-            state.set_state(State::Failed);
-            state.set_error(format!("All instances failed to start: {spawn_errors:?}"));
-            return Err(spawn_errors.remove(0));
-        }
-
-        state.set_state(State::Running);
-        info!(service_id = %state.id, running = running_count, "Service started");
 
         Ok(())
     }
 
     /// Stops the service.
     ///
-    /// Stops all running instances gracefully.
+    /// Stops all running instances and unbinds any ports.
     ///
     /// # Errors
     ///
@@ -211,6 +386,9 @@ impl ServiceHandle {
         drop(state);
 
         info!(service_id = %service_id, "Stopping service");
+
+        // Unbind any ports for HTTP/TCP services
+        self.unbind_service_ports().await;
 
         // Stop all instances
         let mut instances = self.instances.lock().await;
@@ -355,6 +533,91 @@ impl ServiceHandle {
         }
     }
 
+    /// Binds ports for HTTP/TCP services.
+    async fn bind_service_ports(
+        &self,
+        service_id: &str,
+        service_name: &str,
+        ports: &[u16],
+    ) -> Result<()> {
+        let Some(proxy_server) = &self.proxy_server else {
+            if !ports.is_empty() {
+                warn!(
+                    service_id = %service_id,
+                    "Service has listen ports but no proxy server configured"
+                );
+            }
+            return Ok(());
+        };
+
+        let mut bound = self.bound_ports.lock().await;
+
+        for &port in ports {
+            match proxy_server
+                .bind_port(port, service_id.to_string(), service_name.to_string())
+                .await
+            {
+                Ok(actual_port) => {
+                    info!(service_id = %service_id, port = actual_port, "Bound port");
+                    bound.push(actual_port);
+                }
+                Err(e) => {
+                    error!(service_id = %service_id, port, error = %e, "Failed to bind port");
+                    // Unbind any ports we already bound
+                    for &p in bound.iter() {
+                        let _ = proxy_server.unbind_port(p).await;
+                    }
+                    bound.clear();
+                    return Err(e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Unbinds all ports for this service.
+    async fn unbind_service_ports(&self) {
+        let Some(proxy_server) = &self.proxy_server else {
+            return;
+        };
+
+        let mut bound = self.bound_ports.lock().await;
+
+        for &port in bound.iter() {
+            if let Err(e) = proxy_server.unbind_port(port).await {
+                warn!(port, error = %e, "Failed to unbind port");
+            } else {
+                debug!(port, "Unbound port");
+            }
+        }
+
+        bound.clear();
+    }
+
+    /// Spawns command instances and returns any spawn errors.
+    async fn spawn_command_instances(
+        &self,
+        service_id: &str,
+        desired_replicas: usize,
+    ) -> Vec<DaemonError> {
+        let mut spawn_errors = Vec::new();
+
+        for i in 0..desired_replicas {
+            match self.spawn_instance().await {
+                Ok(()) => {
+                    debug!(service_id = %service_id, instance = i, "Spawned instance");
+                }
+                Err(e) => {
+                    error!(service_id = %service_id, instance = i, error = %e, "Failed to spawn instance");
+                    spawn_errors.push(e);
+                }
+            }
+        }
+
+        spawn_errors
+    }
+
     /// Updates the service state for persistence.
     pub async fn update_state<F>(&self, f: F)
     where
@@ -417,7 +680,7 @@ mod tests {
     async fn test_service_handle_creation() {
         let pool = RuntimePool::new(10).expect("should create pool");
         let config = make_test_config();
-        let handle = ServiceHandle::new(config, Arc::new(pool), minimal_component());
+        let handle = ServiceHandle::new(config, Arc::new(pool), minimal_component(), None);
 
         assert_eq!(handle.name().await, "test-service");
         assert_eq!(handle.current_state().await, State::Creating);
@@ -428,7 +691,7 @@ mod tests {
         let pool = RuntimePool::new(10).expect("should create pool");
         let mut config = make_test_config();
         config.replicas.min = 0; // No replicas for simpler testing
-        let handle = ServiceHandle::new(config, Arc::new(pool), minimal_component());
+        let handle = ServiceHandle::new(config, Arc::new(pool), minimal_component(), None);
 
         // Update to stopped state manually (simulating initialization complete)
         handle
@@ -448,7 +711,7 @@ mod tests {
     async fn test_cannot_start_from_running() {
         let pool = RuntimePool::new(10).expect("should create pool");
         let config = make_test_config();
-        let handle = ServiceHandle::new(config, Arc::new(pool), minimal_component());
+        let handle = ServiceHandle::new(config, Arc::new(pool), minimal_component(), None);
 
         // Manually set to running
         handle
@@ -468,7 +731,7 @@ mod tests {
     async fn test_cannot_stop_from_stopped() {
         let pool = RuntimePool::new(10).expect("should create pool");
         let config = make_test_config();
-        let handle = ServiceHandle::new(config, Arc::new(pool), minimal_component());
+        let handle = ServiceHandle::new(config, Arc::new(pool), minimal_component(), None);
 
         // Manually set to stopped
         handle
@@ -488,7 +751,7 @@ mod tests {
     async fn test_get_detail() {
         let pool = RuntimePool::new(10).expect("should create pool");
         let config = make_test_config();
-        let handle = ServiceHandle::new(config, Arc::new(pool), minimal_component());
+        let handle = ServiceHandle::new(config, Arc::new(pool), minimal_component(), None);
 
         let detail = handle.get_detail().await;
         assert_eq!(detail.name, "test-service");

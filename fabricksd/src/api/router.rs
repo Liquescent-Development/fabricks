@@ -53,6 +53,40 @@ pub fn build_router(state: AppState) -> Router {
             "/v1/mortar/projects/{name}",
             delete(handlers::mortar::teardown_mortar),
         )
+        // Network management
+        .route("/v1/networks", post(handlers::networks::create_network))
+        .route("/v1/networks", get(handlers::networks::list_networks))
+        .route("/v1/networks/{id}", get(handlers::networks::get_network))
+        .route(
+            "/v1/networks/{id}",
+            delete(handlers::networks::delete_network),
+        )
+        .route(
+            "/v1/networks/{id}/join",
+            post(handlers::networks::join_network),
+        )
+        .route(
+            "/v1/networks/{id}/leave",
+            post(handlers::networks::leave_network),
+        )
+        // Health monitoring
+        .route(
+            "/v1/health/services",
+            get(handlers::health::get_all_health),
+        )
+        .route(
+            "/v1/services/{id}/health",
+            get(handlers::health::get_service_health),
+        )
+        .route(
+            "/v1/services/{id}/health/check",
+            post(handlers::health::check_service_health),
+        )
+        // Proxy information
+        .route(
+            "/v1/proxy/bindings",
+            get(handlers::health::get_proxy_bindings),
+        )
         // Add state
         .with_state(state)
         // Add tracing layer for request/response logging

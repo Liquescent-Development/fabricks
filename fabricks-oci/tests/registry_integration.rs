@@ -42,6 +42,7 @@ fn test_config(name: &str, version: &str) -> Fabrickfile {
         info: Info {
             name: name.to_string(),
             version: version.to_string(),
+            service_type: fabricks_common::models::fabrickfile::ServiceType::default(),
             description: Some("Integration test module".to_string()),
             authors: Some(vec!["Test Author".to_string()]),
             license: Some("MIT".to_string()),

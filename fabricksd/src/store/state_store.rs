@@ -27,7 +27,7 @@ pub mod trees {
 ///
 /// Provides a generic key-value interface for storing serializable data
 /// organized into separate trees (namespaces).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StateStore {
     db: Arc<Db>,
 }
@@ -145,6 +145,46 @@ impl StateStore {
     pub fn flush(&self) -> Result<()> {
         self.db.flush()?;
         Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    // Network convenience methods
+    // -------------------------------------------------------------------------
+
+    /// Saves a network state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serialization or database operation fails.
+    pub fn save_network(&self, network: &crate::network::NetworkState) -> Result<()> {
+        self.put(trees::NETWORKS, &network.id, network)
+    }
+
+    /// Deletes a network state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database operation fails.
+    pub fn delete_network(&self, id: &str) -> Result<bool> {
+        self.delete(trees::NETWORKS, id)
+    }
+
+    /// Gets a network state by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if deserialization or database operation fails.
+    pub fn get_network(&self, id: &str) -> Result<Option<crate::network::NetworkState>> {
+        self.get(trees::NETWORKS, id)
+    }
+
+    /// Lists all network states.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if deserialization or database operation fails.
+    pub fn list_networks(&self) -> Result<Vec<crate::network::NetworkState>> {
+        self.list(trees::NETWORKS)
     }
 }
 

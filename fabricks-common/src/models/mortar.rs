@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use super::common::{ByteSize, Duration, Labels, Replicas, Resources, RestartPolicy};
+use super::fabrickfile::ServiceType;
 use super::health_check::HealthCheck;
 
 /// The current supported mortar file format version.
@@ -225,6 +226,10 @@ pub struct Service {
     /// Override fabrick version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+
+    /// Service type (command, http, tcp).
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "type")]
+    pub service_type: Option<ServiceType>,
 
     /// Networks this service belongs to.
     pub networks: Vec<String>,

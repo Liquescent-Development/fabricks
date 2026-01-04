@@ -237,6 +237,7 @@ fn create_minimal_fabrickfile(name: &str) -> Fabrickfile {
         info: fabricks_common::models::fabrickfile::Info {
             name: name.to_string(),
             version: "0.0.0".to_string(),
+            service_type: fabricks_common::models::fabrickfile::ServiceType::default(),
             description: None,
             authors: None,
             license: None,
@@ -274,6 +275,7 @@ mod tests {
             info: fabricks_common::models::fabrickfile::Info {
                 name: "inspect-test".to_string(),
                 version: "2.0.0".to_string(),
+                service_type: fabricks_common::models::fabrickfile::ServiceType::default(),
                 description: Some("Test module for inspect".to_string()),
                 authors: Some(vec!["Test Author".to_string()]),
                 license: Some("MIT".to_string()),
