@@ -2,6 +2,7 @@
 
 pub mod build;
 pub mod daemon;
+pub mod images;
 pub mod inspect;
 pub mod login;
 pub mod logout;

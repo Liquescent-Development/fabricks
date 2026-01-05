@@ -82,6 +82,19 @@ pub enum Commands {
     ///
     /// Manage multi-service deployments.
     Mortar(MortarArgs),
+
+    /// List locally stored modules.
+    ///
+    /// Shows all modules built or pulled to local storage.
+    Images(ImagesArgs),
+}
+
+/// Arguments for the images command.
+#[derive(Parser, Debug)]
+pub struct ImagesArgs {
+    /// Output format.
+    #[arg(short, long, value_enum, default_value = "text")]
+    pub format: OutputFormat,
 }
 
 /// Arguments for the build command.
@@ -303,17 +316,23 @@ pub enum ServiceCommands {
         format: OutputFormat,
     },
 
-    /// Deploy and start a service from a Fabrickfile.
+    /// Deploy and start a service from a Fabrickfile or stored module.
     ///
     /// Creates the service and starts it immediately.
+    ///
+    /// The reference can be:
+    /// - A local file path (e.g., `./my-service` or `examples/hello-http`)
+    /// - A stored module tag (e.g., `hello-http:0.1.0`)
+    /// - A registry reference (e.g., `ghcr.io/user/module:1.0.0`) - requires `fabricks pull` first
     Run {
-        /// Path to the Fabrickfile or directory containing one.
+        /// Module reference (path, tag, or registry reference).
+        ///
+        /// Examples:
+        /// - ./my-service (local path)
+        /// - hello-http:0.1.0 (stored module tag)
+        /// - ghcr.io/user/module:latest (registry reference)
         #[arg(default_value = ".")]
-        path: PathBuf,
-
-        /// Path to pre-built WASM module (skips build step).
-        #[arg(long)]
-        wasm: Option<PathBuf>,
+        reference: String,
 
         /// Output format.
         #[arg(short, long, value_enum, default_value = "text")]

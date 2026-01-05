@@ -48,16 +48,16 @@ cargo install cargo-component
 ./target/release/fabricksd
 ```
 
-**2. Build and deploy the example service:**
+**2. Deploy the example service:**
 
 ```bash
-# Build the WASM component
-cd examples/hello-http
-cargo component build --release
-cd ../..
-
-# Deploy via CLI
+# Option A: Deploy from path (builds automatically if needed)
 ./target/release/fabricks service run examples/hello-http
+
+# Option B: Build first, then run by tag
+./target/release/fabricks build examples/hello-http
+./target/release/fabricks images  # List stored modules
+./target/release/fabricks service run hello-http:0.1.0
 ```
 
 **3. Test it:**
@@ -73,8 +73,14 @@ curl http://localhost:8080/
 # List services
 ./target/release/fabricks service ls
 
+# View service details
+./target/release/fabricks service inspect <service-id>
+
 # Stop the service
 ./target/release/fabricks service stop <service-id>
+
+# Remove the service
+./target/release/fabricks service rm <service-id>
 ```
 
 ### Create Your Own Service
@@ -370,8 +376,10 @@ fabricks pull wasm://redis:7.2
 - ✅ Service management (create, start, stop, scale, delete)
 - ✅ Network management and port binding
 - ✅ Fabrickfile and mortar file parsing
-- ✅ OCI registry client
+- ✅ OCI registry client with local storage
 - ✅ Health monitoring infrastructure
+- ✅ Module storage integration (`fabricks images`, run by tag)
+- ✅ Build-on-run (automatic build when running from path)
 
 **In Progress:**
 - 🔄 Auto-scaling
