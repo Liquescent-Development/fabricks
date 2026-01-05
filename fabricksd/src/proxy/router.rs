@@ -13,6 +13,26 @@ use crate::error::{DaemonError, Result};
 
 use super::loadbalancer::LoadBalancer;
 
+/// Protocol type for port binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BindingProtocol {
+    /// HTTP protocol - requests are parsed as HTTP and routed to handlers.
+    #[default]
+    Http,
+
+    /// Raw TCP protocol - connections are passed directly to handlers.
+    Tcp,
+}
+
+impl std::fmt::Display for BindingProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Http => write!(f, "http"),
+            Self::Tcp => write!(f, "tcp"),
+        }
+    }
+}
+
 /// Binding information for a port.
 #[derive(Debug, Clone)]
 pub struct ServiceBinding {
@@ -24,6 +44,9 @@ pub struct ServiceBinding {
 
     /// The port being listened on.
     pub port: u16,
+
+    /// The protocol for this binding.
+    pub protocol: BindingProtocol,
 }
 
 /// Router for directing requests to services.
@@ -57,13 +80,30 @@ impl ServiceRouter {
         }
     }
 
-    /// Registers a service binding for a port.
+    /// Registers a service binding for a port with the default HTTP protocol.
     ///
     /// # Errors
     ///
     /// Returns an error if the port is already bound to another service.
     #[instrument(skip(self), fields(port, service_id, service_name))]
     pub async fn bind(&self, port: u16, service_id: String, service_name: String) -> Result<()> {
+        self.bind_with_protocol(port, service_id, service_name, BindingProtocol::Http)
+            .await
+    }
+
+    /// Registers a service binding for a port with a specific protocol.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the port is already bound to another service.
+    #[instrument(skip(self), fields(port, service_id, service_name, %protocol))]
+    pub async fn bind_with_protocol(
+        &self,
+        port: u16,
+        service_id: String,
+        service_name: String,
+        protocol: BindingProtocol,
+    ) -> Result<()> {
         let mut bindings = self.bindings.write().await;
 
         if let Some(existing) = bindings.get(&port) {
@@ -73,7 +113,7 @@ impl ServiceRouter {
             });
         }
 
-        debug!(port, %service_id, %service_name, "Binding port to service");
+        debug!(port, %service_id, %service_name, %protocol, "Binding port to service");
 
         bindings.insert(
             port,
@@ -81,6 +121,7 @@ impl ServiceRouter {
                 service_id,
                 service_name,
                 port,
+                protocol,
             },
         );
 

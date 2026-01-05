@@ -13,7 +13,7 @@ use crate::error::Result;
 use crate::events::EventBus;
 use crate::health::{HealthMonitor, HealthMonitorConfig};
 use crate::network::{NetworkManager, ServiceRegistry};
-use crate::proxy::{EgressProxy, ProxyServer, RequestHandler, ServiceRouter};
+use crate::proxy::{EgressProxy, ProxyServer, RequestHandler, ServiceRouter, TcpConnectionHandler};
 use crate::service::ServiceManager;
 use crate::store::StateStore;
 
@@ -147,7 +147,7 @@ impl AppState {
 
     /// Initializes async components after construction.
     ///
-    /// This must be called after `new()` to set up the HTTP request routing
+    /// This must be called after `new()` to set up the HTTP and TCP request routing
     /// between the proxy server and service manager.
     ///
     /// # Errors
@@ -167,6 +167,20 @@ impl AppState {
 
         self.proxy_server.set_request_handler(request_handler).await;
         info!("HTTP request handler configured");
+
+        // Set up TCP connection routing from proxy server to service manager
+        let service_manager = Arc::clone(&self.service_manager);
+
+        let tcp_handler: TcpConnectionHandler = Arc::new(move |service_id, stream, peer_addr| {
+            let service_manager = Arc::clone(&service_manager);
+            Box::pin(async move {
+                let manager = service_manager.read().await;
+                manager.route_tcp_connection(&service_id, stream, peer_addr).await
+            })
+        });
+
+        self.proxy_server.set_tcp_connection_handler(tcp_handler).await;
+        info!("TCP connection handler configured");
 
         Ok(())
     }

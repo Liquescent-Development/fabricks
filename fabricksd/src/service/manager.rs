@@ -7,10 +7,12 @@
 //! - Managing mortar projects (multi-service deployments)
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
+use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -457,6 +459,37 @@ impl ServiceManager {
         let handle = self.get_handle(service_id).await?;
         handle
             .handle_http_request(request)
+            .await
+            .map_err(|e| DaemonError::ServiceError {
+                id: service_id.to_string(),
+                reason: e.to_string(),
+            })
+    }
+
+    /// Routes a TCP connection to the appropriate service.
+    ///
+    /// This is called by the proxy server's TCP connection handler to delegate
+    /// incoming TCP connections to the correct service's WASM runtime using the
+    /// inetd model (stdin/stdout connected to the TCP stream).
+    ///
+    /// # Arguments
+    ///
+    /// * `service_id` - The ID of the service to route to
+    /// * `stream` - The TCP stream to connect
+    /// * `peer_addr` - The peer's socket address
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the service is not found or connection handling fails.
+    pub async fn route_tcp_connection(
+        &self,
+        service_id: &str,
+        stream: TcpStream,
+        peer_addr: SocketAddr,
+    ) -> Result<()> {
+        let handle = self.get_handle(service_id).await?;
+        handle
+            .handle_tcp_connection(stream, peer_addr)
             .await
             .map_err(|e| DaemonError::ServiceError {
                 id: service_id.to_string(),

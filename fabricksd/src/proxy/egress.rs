@@ -1,14 +1,21 @@
-//! Egress proxy for outbound HTTP requests from WASM modules.
+//! Egress proxy for outbound HTTP and TCP connections from WASM modules.
 //!
-//! This module handles all outbound HTTP connections from WASM services.
+//! This module handles all outbound connections from WASM services.
 //! It validates connections against capabilities and network policies,
 //! then either routes to internal services or executes external requests.
+//!
+//! # Supported Protocols
+//!
+//! - **HTTP** - Full HTTP request/response via [`execute`](EgressProxy::execute)
+//! - **TCP** - Raw TCP connections via [`connect_tcp`](EgressProxy::connect_tcp)
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use bytes::Bytes;
 use reqwest::Client;
-use tracing::{debug, error, warn};
+use tokio::net::TcpStream;
+use tracing::{debug, error, info, warn};
 
 use fabricks_common::models::capability::Capabilities;
 
@@ -110,6 +117,71 @@ impl EgressResponse {
             headers: vec![("content-type".to_string(), "text/plain".to_string())],
             body: Bytes::from(message.to_string()),
         }
+    }
+}
+
+/// Request for an outbound TCP connection.
+#[derive(Debug, Clone)]
+pub struct TcpConnectRequest {
+    /// Target hostname or IP address.
+    pub host: String,
+    /// Target port.
+    pub port: u16,
+}
+
+impl TcpConnectRequest {
+    /// Creates a new TCP connect request.
+    #[must_use]
+    pub fn new(host: String, port: u16) -> Self {
+        Self { host, port }
+    }
+
+    /// Returns the target as a "host:port" string.
+    #[must_use]
+    pub fn target(&self) -> String {
+        format!("{}:{}", self.host, self.port)
+    }
+}
+
+/// Result of a TCP connection attempt.
+#[derive(Debug)]
+pub enum TcpConnectResult {
+    /// Connection established successfully.
+    Connected {
+        /// The connected TCP stream.
+        stream: TcpStream,
+        /// The remote address connected to.
+        peer_addr: SocketAddr,
+    },
+    /// Connection denied due to capability or policy violation.
+    Denied {
+        /// Reason the connection was denied.
+        reason: String,
+    },
+    /// Connection failed due to network error.
+    Failed {
+        /// Error description.
+        error: String,
+    },
+}
+
+impl TcpConnectResult {
+    /// Returns true if the connection was established.
+    #[must_use]
+    pub const fn is_connected(&self) -> bool {
+        matches!(self, Self::Connected { .. })
+    }
+
+    /// Returns true if the connection was denied.
+    #[must_use]
+    pub const fn is_denied(&self) -> bool {
+        matches!(self, Self::Denied { .. })
+    }
+
+    /// Returns true if the connection failed.
+    #[must_use]
+    pub const fn is_failed(&self) -> bool {
+        matches!(self, Self::Failed { .. })
     }
 }
 
@@ -236,6 +308,142 @@ impl EgressProxy {
                     "Egress denied: policy"
                 );
                 EgressResponse::error(403, &format!("Forbidden: {reason}"))
+            }
+        }
+    }
+
+    /// Establishes an outbound TCP connection.
+    ///
+    /// Validates the connection against capabilities and network policies,
+    /// then establishes the TCP connection if allowed.
+    ///
+    /// # Arguments
+    ///
+    /// * `from_service_id` - The service making the connection
+    /// * `capabilities` - The service's capability grants
+    /// * `request` - The connection request
+    ///
+    /// # Returns
+    ///
+    /// A [`TcpConnectResult`] indicating success, denial, or failure.
+    pub async fn connect_tcp(
+        &self,
+        from_service_id: &str,
+        capabilities: &Option<Capabilities>,
+        request: TcpConnectRequest,
+    ) -> TcpConnectResult {
+        debug!(
+            from = %from_service_id,
+            host = %request.host,
+            port = %request.port,
+            "Processing TCP connect request"
+        );
+
+        // Validate the connection
+        let decision = validate_connection(
+            from_service_id,
+            capabilities,
+            &request.host,
+            request.port,
+            &self.network_manager,
+        )
+        .await;
+
+        match decision {
+            ConnectionDecision::AllowInternal { service_id } => {
+                // For internal connections, we still establish a TCP connection
+                // to the internal service. The service registry should have the
+                // actual address/port for the service.
+                debug!(
+                    from = %from_service_id,
+                    to = %service_id,
+                    "Allowing internal TCP connection"
+                );
+                self.establish_tcp_connection(&request.host, request.port).await
+            }
+            ConnectionDecision::AllowExternal => {
+                debug!(
+                    from = %from_service_id,
+                    target = %request.target(),
+                    "Allowing external TCP connection"
+                );
+                self.establish_tcp_connection(&request.host, request.port).await
+            }
+            ConnectionDecision::DenyCapability { reason } => {
+                warn!(
+                    from = %from_service_id,
+                    target = %request.target(),
+                    reason = %reason,
+                    "TCP connect denied: capability"
+                );
+                TcpConnectResult::Denied { reason }
+            }
+            ConnectionDecision::DenyNetwork { reason } => {
+                warn!(
+                    from = %from_service_id,
+                    target = %request.target(),
+                    reason = %reason,
+                    "TCP connect denied: network"
+                );
+                TcpConnectResult::Denied { reason }
+            }
+            ConnectionDecision::DenyPolicy { reason } => {
+                warn!(
+                    from = %from_service_id,
+                    target = %request.target(),
+                    reason = %reason,
+                    "TCP connect denied: policy"
+                );
+                TcpConnectResult::Denied { reason }
+            }
+        }
+    }
+
+    /// Establishes a TCP connection to the given host and port.
+    async fn establish_tcp_connection(&self, host: &str, port: u16) -> TcpConnectResult {
+        let target = format!("{host}:{port}");
+
+        // Resolve the address
+        let addr: SocketAddr = match tokio::net::lookup_host(&target).await {
+            Ok(mut addrs) => {
+                match addrs.next() {
+                    Some(addr) => addr,
+                    None => {
+                        warn!(target = %target, "DNS lookup returned no addresses");
+                        return TcpConnectResult::Failed {
+                            error: format!("DNS lookup returned no addresses for {target}"),
+                        };
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(target = %target, error = %e, "DNS lookup failed");
+                return TcpConnectResult::Failed {
+                    error: format!("DNS lookup failed for {target}: {e}"),
+                };
+            }
+        };
+
+        // Establish the connection
+        match TcpStream::connect(addr).await {
+            Ok(stream) => {
+                let peer_addr = match stream.peer_addr() {
+                    Ok(addr) => addr,
+                    Err(e) => {
+                        warn!(error = %e, "Failed to get peer address");
+                        return TcpConnectResult::Failed {
+                            error: format!("Failed to get peer address: {e}"),
+                        };
+                    }
+                };
+                info!(target = %target, peer_addr = %peer_addr, "TCP connection established");
+                TcpConnectResult::Connected { stream, peer_addr }
+            }
+            Err(e) => {
+                warn!(target = %target, error = %e, "TCP connection failed");
+                TcpConnectResult::Failed {
+                    error: format!("TCP connection failed to {target}: {e}"),
+                }
             }
         }
     }
@@ -528,5 +736,73 @@ mod tests {
 
         assert_eq!(response.status, 200);
         assert_eq!(response.body, Bytes::from("internal response"));
+    }
+
+    #[test]
+    fn test_tcp_connect_request() {
+        let req = TcpConnectRequest::new("database.example.com".to_string(), 5432);
+        assert_eq!(req.host, "database.example.com");
+        assert_eq!(req.port, 5432);
+        assert_eq!(req.target(), "database.example.com:5432");
+    }
+
+    #[test]
+    fn test_tcp_connect_result_is_methods() {
+        // We can't easily construct TcpConnectResult::Connected without a real stream,
+        // but we can test the denied and failed variants.
+        let denied = TcpConnectResult::Denied {
+            reason: "test".to_string(),
+        };
+        assert!(!denied.is_connected());
+        assert!(denied.is_denied());
+        assert!(!denied.is_failed());
+
+        let failed = TcpConnectResult::Failed {
+            error: "test".to_string(),
+        };
+        assert!(!failed.is_connected());
+        assert!(!failed.is_denied());
+        assert!(failed.is_failed());
+    }
+
+    #[tokio::test]
+    async fn test_tcp_connect_deny_no_capability() {
+        let manager = create_test_network_manager();
+        let proxy = EgressProxy::new(manager).expect("create proxy");
+
+        let request = TcpConnectRequest::new("database.example.com".to_string(), 5432);
+        let result = proxy.connect_tcp("svc-1", &None, request).await;
+
+        assert!(result.is_denied());
+        if let TcpConnectResult::Denied { reason } = result {
+            assert!(reason.contains("capability"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tcp_connect_deny_capability_not_granted() {
+        let manager = create_test_network_manager();
+        let proxy = EgressProxy::new(manager).expect("create proxy");
+
+        let caps = capabilities_for_connect(vec!["other.example.com:5432"]);
+        let request = TcpConnectRequest::new("database.example.com".to_string(), 5432);
+        let result = proxy.connect_tcp("svc-1", &caps, request).await;
+
+        assert!(result.is_denied());
+    }
+
+    #[tokio::test]
+    async fn test_tcp_connect_fail_unreachable_host() {
+        let manager = create_test_network_manager();
+        let proxy = EgressProxy::new(manager).expect("create proxy");
+
+        // Grant the capability
+        let caps = capabilities_for_connect(vec!["unreachable-host-that-does-not-exist.local:1234"]);
+        let request =
+            TcpConnectRequest::new("unreachable-host-that-does-not-exist.local".to_string(), 1234);
+        let result = proxy.connect_tcp("svc-1", &caps, request).await;
+
+        // Should fail because the host doesn't exist
+        assert!(result.is_failed());
     }
 }

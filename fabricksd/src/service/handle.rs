@@ -6,13 +6,16 @@
 //! For HTTP services, the handle also manages port bindings via the proxy server
 //! and maintains an `HttpRuntime` for handling incoming requests.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
+use tokio::net::TcpStream;
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use fabricks_runtime::http::{HttpRuntime, HttpRuntimeConfig, OutboundHandler};
+use fabricks_runtime::tcp::{TcpRuntime, TcpRuntimeConfig};
 use fabricks_runtime::{HttpRequest, HttpResponse, Runtime, RuntimeConfig, RuntimePool};
 
 use crate::error::{DaemonError, Result};
@@ -68,6 +71,9 @@ pub struct ServiceHandle {
     /// HTTP runtime for handling incoming requests (HTTP services only).
     http_runtime: RwLock<Option<Arc<HttpRuntime>>>,
 
+    /// TCP runtime for handling incoming connections (TCP services only).
+    tcp_runtime: RwLock<Option<Arc<TcpRuntime>>>,
+
     /// Outbound handler for validating outbound HTTP requests.
     outbound_handler: RwLock<Option<Arc<dyn OutboundHandler>>>,
 }
@@ -109,6 +115,7 @@ impl ServiceHandle {
             proxy_server,
             bound_ports: Mutex::new(Vec::new()),
             http_runtime: RwLock::new(None),
+            tcp_runtime: RwLock::new(None),
             outbound_handler: RwLock::new(None),
         }
     }
@@ -128,6 +135,7 @@ impl ServiceHandle {
             proxy_server,
             bound_ports: Mutex::new(Vec::new()),
             http_runtime: RwLock::new(None),
+            tcp_runtime: RwLock::new(None),
             outbound_handler: RwLock::new(None),
         }
     }
@@ -221,6 +229,39 @@ impl ServiceHandle {
             })
     }
 
+    /// Handles an incoming TCP connection (TCP services only).
+    ///
+    /// This routes the connection to the WASM component using the inetd model -
+    /// stdin/stdout are connected to the TCP stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The service is not a TCP service
+    /// - The TCP runtime is not initialized
+    /// - Connection handling fails
+    pub async fn handle_tcp_connection(
+        &self,
+        stream: TcpStream,
+        peer_addr: SocketAddr,
+    ) -> Result<()> {
+        let runtime_guard = self.tcp_runtime.read().await;
+        let runtime = runtime_guard.as_ref().ok_or_else(|| {
+            DaemonError::ServiceError {
+                id: String::new(), // ID will be filled in by caller
+                reason: "TCP runtime not initialized".to_string(),
+            }
+        })?;
+
+        runtime
+            .handle_connection(stream, peer_addr)
+            .await
+            .map_err(|e| DaemonError::ServiceError {
+                id: String::new(),
+                reason: e.to_string(),
+            })
+    }
+
     /// Creates the HTTP runtime for this service.
     ///
     /// Called during `start()` for HTTP services. Also sets up the outbound handler
@@ -253,6 +294,37 @@ impl ServiceHandle {
         *handler_guard = Some(outbound_handler);
 
         debug!("Created HTTP runtime and outbound handler for service");
+
+        Ok(())
+    }
+
+    /// Creates the TCP runtime for this service.
+    ///
+    /// Called during `start()` for TCP services.
+    async fn create_tcp_runtime(&self) -> Result<()> {
+        let state = self.state.read().await;
+        let capabilities = state.config.capabilities.clone();
+        let args = state.config.args.clone();
+        drop(state);
+
+        let config = TcpRuntimeConfig {
+            capabilities,
+            args,
+            fuel_limit: None,
+            connection_timeout: None,
+        };
+
+        let runtime = TcpRuntime::new(&self.wasm_bytes, config).map_err(|e| {
+            DaemonError::ServiceError {
+                id: String::new(),
+                reason: format!("Failed to create TCP runtime: {e}"),
+            }
+        })?;
+
+        let mut runtime_guard = self.tcp_runtime.write().await;
+        *runtime_guard = Some(Arc::new(runtime));
+
+        debug!("Created TCP runtime for service");
 
         Ok(())
     }
@@ -305,8 +377,13 @@ impl ServiceHandle {
 
         // Bind ports for HTTP/TCP services
         if service_type.is_http() || service_type.is_tcp() {
-            self.bind_service_ports(&service_id, &service_name, &listen_ports)
-                .await?;
+            self.bind_service_ports(
+                &service_id,
+                &service_name,
+                &listen_ports,
+                service_type.is_tcp(),
+            )
+            .await?;
         }
 
         // Create HTTP runtime for HTTP services
@@ -317,6 +394,16 @@ impl ServiceHandle {
                 return Err(e);
             }
             info!(service_id = %service_id, "Created HTTP runtime");
+        }
+
+        // Create TCP runtime for TCP services
+        if service_type.is_tcp() {
+            if let Err(e) = self.create_tcp_runtime().await {
+                error!(service_id = %service_id, error = %e, "Failed to create TCP runtime");
+                self.unbind_service_ports().await;
+                return Err(e);
+            }
+            info!(service_id = %service_id, "Created TCP runtime");
         }
 
         // Spawn instances for command services
@@ -534,11 +621,19 @@ impl ServiceHandle {
     }
 
     /// Binds ports for HTTP/TCP services.
+    ///
+    /// # Arguments
+    ///
+    /// * `service_id` - The service ID
+    /// * `service_name` - The service name
+    /// * `ports` - The ports to bind
+    /// * `is_tcp` - Whether to bind as TCP (raw) or HTTP ports
     async fn bind_service_ports(
         &self,
         service_id: &str,
         service_name: &str,
         ports: &[u16],
+        is_tcp: bool,
     ) -> Result<()> {
         let Some(proxy_server) = &self.proxy_server else {
             if !ports.is_empty() {
@@ -551,18 +646,26 @@ impl ServiceHandle {
         };
 
         let mut bound = self.bound_ports.lock().await;
+        let protocol = if is_tcp { "tcp" } else { "http" };
 
         for &port in ports {
-            match proxy_server
-                .bind_port(port, service_id.to_string(), service_name.to_string())
-                .await
-            {
+            let result = if is_tcp {
+                proxy_server
+                    .bind_tcp_port(port, service_id.to_string(), service_name.to_string())
+                    .await
+            } else {
+                proxy_server
+                    .bind_port(port, service_id.to_string(), service_name.to_string())
+                    .await
+            };
+
+            match result {
                 Ok(actual_port) => {
-                    info!(service_id = %service_id, port = actual_port, "Bound port");
+                    info!(service_id = %service_id, port = actual_port, protocol, "Bound port");
                     bound.push(actual_port);
                 }
                 Err(e) => {
-                    error!(service_id = %service_id, port, error = %e, "Failed to bind port");
+                    error!(service_id = %service_id, port, protocol, error = %e, "Failed to bind port");
                     // Unbind any ports we already bound
                     for &p in bound.iter() {
                         let _ = proxy_server.unbind_port(p).await;

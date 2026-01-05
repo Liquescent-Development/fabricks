@@ -1,7 +1,9 @@
-//! HTTP proxy server for routing requests to WASM services.
+//! Proxy server for routing HTTP requests and TCP connections to WASM services.
 //!
 //! The `ProxyServer` binds TCP listeners on configured ports and routes
-//! incoming HTTP requests to the appropriate WASM service via the HTTP runtime.
+//! incoming connections to the appropriate WASM service:
+//! - HTTP ports parse requests and route to HTTP handlers
+//! - TCP ports pass raw connections to TCP handlers (inetd model)
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -13,14 +15,14 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::error::{DaemonError, Result};
 
-use super::router::{ServiceRouter, SharedServiceRouter};
+use super::router::{BindingProtocol, ServiceRouter, SharedServiceRouter};
 
 /// Handle to a running listener.
 #[derive(Debug)]
@@ -62,7 +64,25 @@ pub type RequestFuture = std::pin::Pin<
     Box<dyn std::future::Future<Output = Result<fabricks_runtime::HttpResponse>> + Send>,
 >;
 
-/// HTTP proxy server that manages port listeners and routes requests.
+/// Callback for handling TCP connections.
+///
+/// The proxy server calls this callback with the service ID, TCP stream, and
+/// peer address. The callback should route the connection to the appropriate
+/// WASM runtime (inetd model - stdin/stdout connected to the stream).
+pub type TcpConnectionHandler = Arc<
+    dyn Fn(String, TcpStream, SocketAddr) -> TcpConnectionFuture + Send + Sync,
+>;
+
+/// Future returned by the TCP connection handler.
+pub type TcpConnectionFuture = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<()>> + Send>,
+>;
+
+/// Proxy server that manages port listeners and routes requests.
+///
+/// Supports both HTTP and TCP protocols:
+/// - HTTP ports parse requests and route to HTTP handlers
+/// - TCP ports pass raw connections to TCP handlers (inetd model)
 pub struct ProxyServer {
     /// Port to listener handle map.
     listeners: RwLock<HashMap<u16, ListenerHandle>>,
@@ -70,8 +90,11 @@ pub struct ProxyServer {
     /// Service router for port-to-service mapping.
     router: SharedServiceRouter,
 
-    /// Request handler callback.
+    /// HTTP request handler callback.
     request_handler: RwLock<Option<RequestHandler>>,
+
+    /// TCP connection handler callback.
+    tcp_connection_handler: RwLock<Option<TcpConnectionHandler>>,
 }
 
 impl ProxyServer {
@@ -82,6 +105,7 @@ impl ProxyServer {
             listeners: RwLock::new(HashMap::new()),
             router,
             request_handler: RwLock::new(None),
+            tcp_connection_handler: RwLock::new(None),
         }
     }
 
@@ -91,13 +115,23 @@ impl ProxyServer {
         Self::new(Arc::new(ServiceRouter::new()))
     }
 
-    /// Sets the request handler callback.
+    /// Sets the HTTP request handler callback.
     ///
-    /// This callback is invoked for each incoming request with the service ID
+    /// This callback is invoked for each incoming HTTP request with the service ID
     /// and request details. The callback should route the request to the
     /// appropriate WASM runtime and return the response.
     pub async fn set_request_handler(&self, handler: RequestHandler) {
         let mut guard = self.request_handler.write().await;
+        *guard = Some(handler);
+    }
+
+    /// Sets the TCP connection handler callback.
+    ///
+    /// This callback is invoked for each incoming TCP connection with the service ID,
+    /// TCP stream, and peer address. The callback should route the connection to the
+    /// appropriate WASM runtime (inetd model - stdin/stdout connected to the stream).
+    pub async fn set_tcp_connection_handler(&self, handler: TcpConnectionHandler) {
+        let mut guard = self.tcp_connection_handler.write().await;
         *guard = Some(handler);
     }
 
@@ -169,6 +203,101 @@ impl ProxyServer {
 
         // Spawn listener task
         let task = tokio::spawn(Self::listener_task(
+            actual_port,
+            listener,
+            router,
+            handler_lock,
+            shutdown_rx,
+        ));
+
+        // Store handle
+        let handle = ListenerHandle {
+            port: actual_port,
+            task,
+            shutdown_tx,
+        };
+
+        let mut listeners = self.listeners.write().await;
+        listeners.insert(actual_port, handle);
+
+        Ok(actual_port)
+    }
+
+    /// Binds a TCP port for a service and starts listening.
+    ///
+    /// Unlike `bind_port`, this binds for raw TCP connections (not HTTP).
+    /// Incoming connections are passed directly to the TCP connection handler.
+    ///
+    /// # Arguments
+    ///
+    /// * `port` - The port to bind (use 0 for OS-assigned port)
+    /// * `service_id` - The service ID to route connections to
+    /// * `service_name` - The service name for display and lookup
+    ///
+    /// # Returns
+    ///
+    /// Returns the actual bound port (useful when port 0 was requested).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The port is already bound to another service
+    /// - The port cannot be bound (permission denied, in use, etc.)
+    #[instrument(skip(self), fields(port, service_id, service_name))]
+    pub async fn bind_tcp_port(
+        &self,
+        port: u16,
+        service_id: String,
+        service_name: String,
+    ) -> Result<u16> {
+        // Try to bind the TCP listener first to get actual port
+        let addr = SocketAddr::from(([0, 0, 0, 0], port));
+        let listener = TcpListener::bind(addr).await.map_err(|e| {
+            DaemonError::PortBindError {
+                port,
+                reason: e.to_string(),
+            }
+        })?;
+
+        // Get the actual bound port (important when port 0 was requested)
+        let actual_port = listener
+            .local_addr()
+            .map_err(|e| DaemonError::PortBindError {
+                port,
+                reason: e.to_string(),
+            })?
+            .port();
+
+        // Register with router using TCP protocol (checks for conflicts)
+        // If this fails, listener will be dropped automatically
+        self.router
+            .bind_with_protocol(
+                actual_port,
+                service_id.clone(),
+                service_name.clone(),
+                BindingProtocol::Tcp,
+            )
+            .await?;
+
+        info!(port = actual_port, %service_id, %service_name, protocol = "tcp", "Bound TCP port for service");
+
+        // Create shutdown channel
+        let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+
+        // Clone what we need for the listener task
+        let router = Arc::clone(&self.router);
+        let handler_lock = Arc::new(RwLock::new(None::<TcpConnectionHandler>));
+
+        // Copy current handler reference
+        {
+            let current = self.tcp_connection_handler.read().await;
+            if let Some(ref h) = *current {
+                *handler_lock.write().await = Some(Arc::clone(h));
+            }
+        }
+
+        // Spawn TCP listener task
+        let task = tokio::spawn(Self::tcp_listener_task(
             actual_port,
             listener,
             router,
@@ -304,7 +433,89 @@ impl ProxyServer {
         debug!(port, "Listener task stopped");
     }
 
-    /// Handles a single connection.
+    /// The TCP listener task that accepts connections and routes to TCP handlers.
+    ///
+    /// Unlike the HTTP listener task, this passes raw TCP streams to the handler
+    /// without parsing them as HTTP (inetd model).
+    async fn tcp_listener_task(
+        port: u16,
+        listener: TcpListener,
+        router: SharedServiceRouter,
+        handler: Arc<RwLock<Option<TcpConnectionHandler>>>,
+        mut shutdown: broadcast::Receiver<()>,
+    ) {
+        debug!(port, protocol = "tcp", "TCP listener task started");
+
+        loop {
+            tokio::select! {
+                result = listener.accept() => {
+                    match result {
+                        Ok((stream, addr)) => {
+                            debug!(port, %addr, protocol = "tcp", "Accepted TCP connection");
+
+                            let router = Arc::clone(&router);
+                            let handler = Arc::clone(&handler);
+
+                            tokio::spawn(async move {
+                                if let Err(e) = Self::handle_tcp_connection(
+                                    port,
+                                    stream,
+                                    addr,
+                                    router,
+                                    handler,
+                                ).await {
+                                    warn!(port, %addr, "TCP connection error: {}", e);
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            error!(port, "TCP accept error: {}", e);
+                        }
+                    }
+                }
+                _ = shutdown.recv() => {
+                    debug!(port, "TCP listener received shutdown signal");
+                    break;
+                }
+            }
+        }
+
+        debug!(port, "TCP listener task stopped");
+    }
+
+    /// Handles a single TCP connection by routing to the TCP connection handler.
+    async fn handle_tcp_connection(
+        port: u16,
+        stream: TcpStream,
+        peer_addr: SocketAddr,
+        router: SharedServiceRouter,
+        handler: Arc<RwLock<Option<TcpConnectionHandler>>>,
+    ) -> Result<()> {
+        // Look up the service for this port
+        let Some(binding) = router.lookup(port).await else {
+            warn!(port, "No service bound to TCP port");
+            return Err(DaemonError::PortNotBound { port });
+        };
+
+        // Get the handler
+        let handler_opt = {
+            let guard = handler.read().await;
+            guard.clone()
+        };
+
+        let Some(tcp_handler) = handler_opt else {
+            warn!("No TCP connection handler configured");
+            return Err(DaemonError::IoError(std::io::Error::other(
+                "No TCP connection handler configured",
+            )));
+        };
+
+        // Call the handler with the stream
+        debug!(port, %peer_addr, service_id = %binding.service_id, "Routing TCP connection to service");
+        tcp_handler(binding.service_id.clone(), stream, peer_addr).await
+    }
+
+    /// Handles a single HTTP connection.
     async fn handle_connection(
         port: u16,
         stream: tokio::net::TcpStream,
@@ -502,6 +713,79 @@ mod tests {
 
         server.shutdown().await;
 
+        assert!(server.bound_ports().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_bind_tcp_port() {
+        let server = ProxyServer::with_new_router();
+
+        // Bind TCP port (returns actual port)
+        let port = server
+            .bind_tcp_port(0, "tcp-svc-123".to_string(), "my-tcp-service".to_string())
+            .await
+            .expect("should bind TCP port");
+
+        // The port should be non-zero (OS assigned)
+        assert!(port > 0);
+
+        // There should be one bound port
+        let ports = server.bound_ports().await;
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0], port);
+
+        // Check that router has the binding with TCP protocol
+        let bindings = server.list_bindings().await;
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].protocol, BindingProtocol::Tcp);
+        assert_eq!(bindings[0].service_id, "tcp-svc-123");
+
+        // Unbind
+        server.unbind_port(port).await.expect("should unbind");
+
+        assert!(server.bound_ports().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mixed_http_tcp_ports() {
+        let server = ProxyServer::with_new_router();
+
+        // Bind HTTP port
+        let http_port = server
+            .bind_port(0, "http-svc".to_string(), "http-service".to_string())
+            .await
+            .expect("should bind HTTP port");
+
+        // Bind TCP port
+        let tcp_port = server
+            .bind_tcp_port(0, "tcp-svc".to_string(), "tcp-service".to_string())
+            .await
+            .expect("should bind TCP port");
+
+        // Both ports should be bound
+        let ports = server.bound_ports().await;
+        assert_eq!(ports.len(), 2);
+
+        // Check bindings have correct protocols
+        let bindings = server.list_bindings().await;
+        assert_eq!(bindings.len(), 2);
+
+        let http_binding = bindings.iter().find(|b| b.port == http_port);
+        let tcp_binding = bindings.iter().find(|b| b.port == tcp_port);
+
+        assert!(http_binding.is_some());
+        assert!(tcp_binding.is_some());
+        assert_eq!(
+            http_binding.expect("has http binding").protocol,
+            BindingProtocol::Http
+        );
+        assert_eq!(
+            tcp_binding.expect("has tcp binding").protocol,
+            BindingProtocol::Tcp
+        );
+
+        // Shutdown
+        server.shutdown().await;
         assert!(server.bound_ports().await.is_empty());
     }
 }
