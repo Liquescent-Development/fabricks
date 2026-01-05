@@ -60,6 +60,7 @@ fn main() -> ExitCode {
         Commands::Daemon(args) => rt.block_on(commands::daemon::run(&args)),
         Commands::Service(args) => rt.block_on(commands::service::run(&args)),
         Commands::Mortar(args) => rt.block_on(commands::mortar::run(&args)),
+        Commands::Images(args) => rt.block_on(commands::images::run(&args)),
     };
 
     match result {
