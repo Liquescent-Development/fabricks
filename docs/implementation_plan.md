@@ -1775,11 +1775,143 @@ depends_on = ["api"]
 
 ### Success Criteria
 
-- [x] Can create networks
+#### Core Network Infrastructure
+- [x] Can create networks via API
 - [x] Services assigned to networks
-- [x] Network isolation enforced
+- [x] Network isolation enforced (capability + network membership)
 - [x] Policy validation works
-- [x] API endpoints functional
+- [x] API endpoints functional for CRUD operations
+- [x] Service name-based and ID-based lookups work
+
+#### End-to-End Testing Requirements (Phase 0-9 Integration)
+
+The following end-to-end tests MUST pass before Phase 9 is considered complete. These tests validate that all components from Phases 0-9 work together as a cohesive system.
+
+##### CLI End-to-End Tests
+
+1. **Build and Validate Workflow**
+   - `fabricks validate` correctly validates Fabrickfile syntax
+   - `fabricks validate` correctly validates mortar file syntax
+   - `fabricks build` compiles a WASM module from source
+   - `fabricks inspect` displays correct metadata for built images
+
+2. **Registry Operations**
+   - `fabricks push` uploads a module to an OCI registry
+   - `fabricks pull` downloads a module from an OCI registry
+   - Content verification (SHA256) works correctly
+   - Authentication with registry works (login/logout)
+
+3. **Service Execution via Daemon**
+   - `fabricks run` starts a CLI command WASM module via daemon
+   - `fabricks run` starts an HTTP service WASM module via daemon
+   - Service receives and responds to HTTP requests through proxy
+   - `fabricks service ls` shows running services
+   - `fabricks service logs <id>` retrieves service output
+   - `fabricks service stop <id>` stops a running service
+   - `fabricks service rm <id>` removes a stopped service
+
+##### Daemon API End-to-End Tests
+
+1. **Daemon Lifecycle**
+   - Daemon starts and creates Unix socket
+   - `/v1/daemon/info` returns version and uptime
+   - State persists across daemon restart
+   - Graceful shutdown works correctly
+
+2. **Service Management**
+   - `POST /v1/services` creates a service from config
+   - `GET /v1/services` lists all services
+   - `GET /v1/services/{id}` returns service details
+   - `POST /v1/services/{id}/start` starts a stopped service
+   - `POST /v1/services/{id}/stop` stops a running service
+   - `DELETE /v1/services/{id}` removes a service
+   - Services can be looked up by name OR by ID
+
+3. **Network Management**
+   - `POST /v1/networks` creates a network
+   - `GET /v1/networks` lists all networks
+   - `GET /v1/networks/{id}` returns network details with members
+   - `POST /v1/networks/{id}/join` adds a service to network
+   - `POST /v1/networks/{id}/leave` removes a service from network
+   - `DELETE /v1/networks/{id}` removes an empty network
+   - Cannot delete network with active members
+
+4. **Health Monitoring**
+   - `GET /v1/health/services` returns health summary
+   - `GET /v1/services/{id}/health` returns service health status
+   - `POST /v1/services/{id}/health/check` triggers immediate check
+   - Health transitions (starting → healthy, healthy → unhealthy) detected
+   - `GET /v1/proxy/bindings` lists port bindings
+
+##### HTTP Service End-to-End Tests
+
+1. **Inbound Request Routing**
+   - HTTP service binds port via ProxyServer
+   - External request to bound port reaches WASM handler
+   - Response from WASM handler returned to client
+   - Multiple services can bind different ports
+   - Load balancing works across service replicas
+   - Request routing by Host header works (virtual hosts)
+
+2. **Outbound Request Validation**
+   - WASM module can make HTTP request via `wasi:http/outgoing-handler`
+   - Request to allowed host (via capability) succeeds
+   - Request to disallowed host is blocked
+   - Service-to-service calls within same network work
+   - Service-to-service calls across different networks blocked
+
+3. **Network Isolation**
+   - Service A on network X cannot call service B on network Y
+   - Service A on network X can call service B also on network X
+   - External access works only for services with `access: external`
+   - Internal-only services reject external connections
+
+##### Mortar Deployment End-to-End Tests
+
+1. **Project Deployment**
+   - `fabricks mortar up` creates networks from mortar file
+   - `fabricks mortar up` creates services in dependency order
+   - `fabricks mortar up` assigns services to correct networks
+   - `fabricks mortar ps` shows all project services with status
+   - `fabricks mortar down` stops and removes all services
+   - `fabricks mortar down` cleans up networks
+
+2. **Multi-Service Communication**
+   - API service can communicate with database service (same network)
+   - Worker service can communicate with API service (same network)
+   - Services on different networks are isolated
+   - Network encryption options are respected
+
+##### Test Fixtures Required
+
+1. **WASM Test Modules**
+   - `hello-cli.wasm` - CLI command that prints to stdout
+   - `hello-http.wasm` - HTTP service implementing `wasi:http/incoming-handler`
+   - `http-client.wasm` - Service that makes outbound HTTP requests
+   - `multi-service/` - Mortar project with API + worker + database services
+
+2. **Test Registry**
+   - Local OCI registry for push/pull tests (e.g., `registry:2`)
+   - Pre-populated test images
+
+3. **Test Infrastructure**
+   - Docker Compose or similar for test environment setup
+   - Automated cleanup between test runs
+
+##### Test Execution
+
+All end-to-end tests should be runnable via:
+```bash
+cargo test --package fabricks-e2e --test integration
+```
+
+Individual test categories:
+```bash
+cargo test --package fabricks-e2e --test cli_tests
+cargo test --package fabricks-e2e --test daemon_api_tests
+cargo test --package fabricks-e2e --test http_service_tests
+cargo test --package fabricks-e2e --test mortar_tests
+```
 
 ---
 

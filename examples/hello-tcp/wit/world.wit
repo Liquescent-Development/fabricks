@@ -1,0 +1,5 @@
+package component:hello-tcp;
+
+world hello-tcp {
+    include wasi:cli/command@0.2.9;
+}

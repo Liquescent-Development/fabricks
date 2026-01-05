@@ -7,10 +7,12 @@
 //! - Managing mortar projects (multi-service deployments)
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
+use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -20,6 +22,12 @@ use fabricks_runtime::{RuntimePool, RuntimePoolBuilder};
 
 use crate::error::{DaemonError, Result};
 use crate::events::{Event, EventBus, EventType};
+use crate::network::{
+    NetworkAccess, NetworkAudit, NetworkConfig, NetworkEncryption, NetworkIsolation,
+    NetworkOptions, SharedNetworkManager,
+};
+use fabricks_common::models::mortar::EncryptionRequirement;
+use crate::proxy::SharedProxyServer;
 use crate::store::StateStore;
 
 use super::dependency::{resolve_shutdown_order, resolve_startup_order, validate_dependencies};
@@ -43,6 +51,12 @@ pub struct ServiceManager {
     /// Event bus for publishing events.
     event_bus: Arc<EventBus>,
 
+    /// Proxy server for HTTP/TCP port bindings.
+    proxy_server: Option<SharedProxyServer>,
+
+    /// Network manager for network isolation.
+    network_manager: Option<SharedNetworkManager>,
+
     /// Mortar project tracking (`project_name` -> `service_ids`).
     mortar_projects: RwLock<HashMap<String, Vec<String>>>,
 }
@@ -55,6 +69,8 @@ impl ServiceManager {
     /// * `state_store` - Store for persisting service state
     /// * `event_bus` - Bus for publishing service events
     /// * `max_cached_modules` - Maximum number of WASM modules to cache
+    /// * `proxy_server` - Optional proxy server for HTTP/TCP port bindings
+    /// * `network_manager` - Optional network manager for network isolation
     ///
     /// # Errors
     ///
@@ -63,6 +79,8 @@ impl ServiceManager {
         state_store: Arc<StateStore>,
         event_bus: Arc<EventBus>,
         max_cached_modules: usize,
+        proxy_server: Option<SharedProxyServer>,
+        network_manager: Option<SharedNetworkManager>,
     ) -> Result<Self> {
         let runtime_pool = RuntimePoolBuilder::new()
             .max_modules(max_cached_modules)
@@ -74,6 +92,8 @@ impl ServiceManager {
             runtime_pool: Arc::new(runtime_pool),
             state_store,
             event_bus,
+            proxy_server,
+            network_manager,
             mortar_projects: RwLock::new(HashMap::new()),
         })
     }
@@ -117,7 +137,12 @@ impl ServiceManager {
         })?;
 
         // Create service handle
-        let handle = ServiceHandle::new(config.clone(), Arc::clone(&self.runtime_pool), wasm_bytes);
+        let handle = ServiceHandle::new(
+            config.clone(),
+            Arc::clone(&self.runtime_pool),
+            wasm_bytes,
+            self.proxy_server.clone(),
+        );
         let id = handle.id().await;
 
         // Persist state
@@ -209,6 +234,7 @@ impl ServiceManager {
         let config = ServiceConfig {
             name: fabrickfile.info.name.clone(),
             version: fabrickfile.info.version.clone(),
+            service_type: fabrickfile.info.service_type,
             wasm_path,
             wasm_digest: digest,
             capabilities: fabrickfile.capabilities.clone(),
@@ -412,7 +438,162 @@ impl ServiceManager {
             .ok_or_else(|| DaemonError::ServiceNotFound { id: id.to_string() })
     }
 
+    /// Routes an HTTP request to the appropriate service.
+    ///
+    /// This is called by the proxy server's request handler to delegate
+    /// incoming HTTP requests to the correct service's WASM runtime.
+    ///
+    /// # Arguments
+    ///
+    /// * `service_id` - The ID of the service to route to
+    /// * `request` - The HTTP request to handle
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the service is not found or request handling fails.
+    pub async fn route_http_request(
+        &self,
+        service_id: &str,
+        request: fabricks_runtime::HttpRequest,
+    ) -> Result<fabricks_runtime::HttpResponse> {
+        let handle = self.get_handle(service_id).await?;
+        handle
+            .handle_http_request(request)
+            .await
+            .map_err(|e| DaemonError::ServiceError {
+                id: service_id.to_string(),
+                reason: e.to_string(),
+            })
+    }
+
+    /// Routes a TCP connection to the appropriate service.
+    ///
+    /// This is called by the proxy server's TCP connection handler to delegate
+    /// incoming TCP connections to the correct service's WASM runtime using the
+    /// inetd model (stdin/stdout connected to the TCP stream).
+    ///
+    /// # Arguments
+    ///
+    /// * `service_id` - The ID of the service to route to
+    /// * `stream` - The TCP stream to connect
+    /// * `peer_addr` - The peer's socket address
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the service is not found or connection handling fails.
+    pub async fn route_tcp_connection(
+        &self,
+        service_id: &str,
+        stream: TcpStream,
+        peer_addr: SocketAddr,
+    ) -> Result<()> {
+        let handle = self.get_handle(service_id).await?;
+        handle
+            .handle_tcp_connection(stream, peer_addr)
+            .await
+            .map_err(|e| DaemonError::ServiceError {
+                id: service_id.to_string(),
+                reason: e.to_string(),
+            })
+    }
+
     // ==================== Mortar Project Operations ====================
+
+    /// Creates networks defined in a mortar file.
+    ///
+    /// Networks that already exist are silently skipped (idempotent).
+    async fn create_mortar_networks(&self, mortar: &MortarFile) -> Result<()> {
+        let Some(network_manager) = &self.network_manager else {
+            return Ok(());
+        };
+
+        let Some(networks) = &mortar.network else {
+            return Ok(());
+        };
+
+        let mut created_networks: Vec<String> = Vec::new();
+        for (network_name, network) in networks {
+            let options = NetworkOptions::new(
+                if network.internal.unwrap_or(false) {
+                    NetworkAccess::Internal
+                } else {
+                    NetworkAccess::External
+                },
+                if network.isolated.unwrap_or(false) {
+                    NetworkIsolation::Isolated
+                } else {
+                    NetworkIsolation::Connected
+                },
+                if network.encryption == Some(EncryptionRequirement::Required) {
+                    NetworkEncryption::Required
+                } else {
+                    NetworkEncryption::Optional
+                },
+                if network.audit_all.unwrap_or(false) {
+                    NetworkAudit::Enabled
+                } else {
+                    NetworkAudit::Disabled
+                },
+            );
+
+            let config = if let Some(ref desc) = network.description {
+                NetworkConfig::with_description(network_name.clone(), desc.clone(), options)
+            } else {
+                NetworkConfig::with_options(network_name.clone(), options)
+            };
+
+            match network_manager.create_network(config).await {
+                Ok(id) => {
+                    info!(network = %network_name, network_id = %id, "Created network");
+                    created_networks.push(id);
+                }
+                Err(e) => {
+                    // Duplicate name is OK for idempotent deploys
+                    if e.to_string().contains("already exists") {
+                        debug!(network = %network_name, "Network already exists, skipping");
+                    } else {
+                        // Rollback created networks
+                        error!(network = %network_name, error = %e, "Failed to create network");
+                        for id in &created_networks {
+                            if let Err(del_err) = network_manager.delete_network(id).await {
+                                warn!(network_id = %id, error = %del_err, "Failed to delete network");
+                            }
+                        }
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Joins a service to its specified networks.
+    async fn join_service_to_networks(
+        &self,
+        service_id: &str,
+        service_name: &str,
+        networks: &[String],
+    ) {
+        let Some(network_manager) = &self.network_manager else {
+            return;
+        };
+
+        for network_name in networks {
+            if let Some(network) = network_manager.get_network_by_name(network_name).await {
+                if let Err(e) = network_manager
+                    .add_service(&network.id, service_id, service_name)
+                    .await
+                {
+                    warn!(service_id = %service_id, network = %network_name, error = %e, "Failed to join network");
+                } else {
+                    debug!(service_id = %service_id, network = %network_name, "Service joined network");
+                }
+            } else {
+                warn!(service = %service_name, network = %network_name, "Network not found, skipping");
+            }
+        }
+    }
 
     /// Deploys a mortar project (multiple services).
     ///
@@ -443,6 +624,9 @@ impl ServiceManager {
 
         info!(project = %project_name, "Deploying mortar project");
 
+        // Create networks from mortar definition
+        self.create_mortar_networks(&mortar).await?;
+
         // Build service configs
         let mut configs: Vec<ServiceConfig> = Vec::new();
 
@@ -461,6 +645,7 @@ impl ServiceManager {
             let config = ServiceConfig {
                 name: service.name.clone().unwrap_or_else(|| service_name.clone()),
                 version: service.version.clone().unwrap_or_else(|| "latest".to_string()),
+                service_type: service.service_type.unwrap_or_default(),
                 wasm_path,
                 wasm_digest: digest,
                 capabilities: fabricks_common::Capabilities::default(),
@@ -495,8 +680,13 @@ impl ServiceManager {
                 })?
                 .clone();
 
+            let service_networks = config.networks.clone();
+
             match self.create_service(config).await {
                 Ok(id) => {
+                    // Join networks if specified
+                    self.join_service_to_networks(&id, service_name, &service_networks)
+                        .await;
                     created_ids.push(id);
                 }
                 Err(e) => {
@@ -673,8 +863,12 @@ impl ServiceManager {
                 }
             };
 
-            let handle =
-                ServiceHandle::from_state(state.clone(), Arc::clone(&self.runtime_pool), wasm_bytes);
+            let handle = ServiceHandle::from_state(
+                state.clone(),
+                Arc::clone(&self.runtime_pool),
+                wasm_bytes,
+                self.proxy_server.clone(),
+            );
             let id = state.id.clone();
 
             // Track in mortar project if applicable
@@ -757,7 +951,8 @@ mod tests {
         let store = Arc::new(StateStore::new(Arc::new(db)));
         let event_bus = Arc::new(EventBus::new(100, 1000));
 
-        let manager = ServiceManager::new(store, event_bus, 10).expect("should create manager");
+        let manager =
+            ServiceManager::new(store, event_bus, 10, None, None).expect("should create manager");
         (manager, dir)
     }
 

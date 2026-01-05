@@ -1,0 +1,20 @@
+fabrick_version = "1.0"
+
+[info]
+name = "hello-tcp"
+version = "0.1.0"
+type = "tcp"
+description = "A simple TCP echo server using the inetd model"
+
+[from]
+source = "rust"
+
+[source]
+path = "."
+
+[build]
+command = "cargo component build --release"
+output = "target/wasm32-wasip1/release/hello_tcp.wasm"
+
+[capabilities.network]
+listen = [9000]

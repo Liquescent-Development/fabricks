@@ -14,6 +14,9 @@ use fabricks_common::models::capability::Capabilities;
 use fabricks_common::models::common::{Replicas, Resources};
 use fabricks_common::models::health_check::HealthCheck;
 
+// Re-export ServiceType from common crate - the single source of truth
+pub use fabricks_common::models::fabrickfile::ServiceType;
+
 /// Service lifecycle state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -102,6 +105,7 @@ impl std::fmt::Display for InstanceState {
     }
 }
 
+
 /// Configuration for creating a service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceConfig {
@@ -110,6 +114,10 @@ pub struct ServiceConfig {
 
     /// Service version.
     pub version: String,
+
+    /// Service type (command, http, tcp).
+    #[serde(default)]
+    pub service_type: ServiceType,
 
     /// Path to the WASM module.
     pub wasm_path: PathBuf,
@@ -160,6 +168,7 @@ impl ServiceConfig {
         Self {
             name,
             version,
+            service_type: ServiceType::default(),
             wasm_path,
             wasm_digest,
             capabilities: Capabilities::default(),

@@ -6,9 +6,14 @@ use std::time::Instant;
 use sled::Db;
 use tokio::sync::{broadcast, RwLock};
 
+use tracing::info;
+
 use crate::config::DaemonConfig;
 use crate::error::Result;
 use crate::events::EventBus;
+use crate::health::{HealthMonitor, HealthMonitorConfig};
+use crate::network::{NetworkManager, ServiceRegistry};
+use crate::proxy::{EgressProxy, ProxyServer, RequestHandler, ServiceRouter, TcpConnectionHandler};
 use crate::service::ServiceManager;
 use crate::store::StateStore;
 
@@ -36,6 +41,21 @@ pub struct AppState {
     /// Service manager for service lifecycle.
     pub service_manager: Arc<RwLock<ServiceManager>>,
 
+    /// Service registry for name-to-ID resolution.
+    pub service_registry: Arc<ServiceRegistry>,
+
+    /// Network manager for network isolation.
+    pub network_manager: Arc<NetworkManager>,
+
+    /// Proxy server for HTTP request routing.
+    pub proxy_server: Arc<ProxyServer>,
+
+    /// Egress proxy for outbound HTTP requests.
+    pub egress_proxy: Arc<EgressProxy>,
+
+    /// Health monitor for service health tracking.
+    pub health_monitor: Arc<HealthMonitor>,
+
     /// Shutdown signal sender.
     shutdown_tx: broadcast::Sender<()>,
 }
@@ -43,12 +63,13 @@ pub struct AppState {
 impl AppState {
     /// Creates a new application state.
     ///
-    /// This initializes the database, state store, event bus, and service manager.
+    /// This initializes the database, state store, event bus, service manager,
+    /// network manager, proxy server, egress proxy, and health monitor.
     ///
     /// # Errors
     ///
-    /// Returns an error if the data directory cannot be created or the
-    /// database cannot be opened.
+    /// Returns an error if the data directory cannot be created, the
+    /// database cannot be opened, or any component fails to initialize.
     pub fn new(config: DaemonConfig) -> Result<Self> {
         // Ensure data directory exists
         std::fs::create_dir_all(&config.daemon.data_dir)?;
@@ -67,11 +88,35 @@ impl AppState {
             config.events.history_size,
         ));
 
-        // Create service manager
+        // Create service registry for name resolution
+        let service_registry = Arc::new(ServiceRegistry::new());
+
+        // Create network manager
+        let network_manager = Arc::new(NetworkManager::new(
+            Arc::clone(&store),
+            Arc::clone(&service_registry),
+        ));
+
+        // Create service router for proxy
+        let service_router = Arc::new(ServiceRouter::new());
+
+        // Create proxy server
+        let proxy_server = Arc::new(ProxyServer::new(Arc::clone(&service_router)));
+
+        // Create egress proxy for outbound requests
+        let egress_proxy = Arc::new(EgressProxy::new(Arc::clone(&network_manager))?);
+
+        // Create health monitor
+        let health_monitor_config = HealthMonitorConfig::default();
+        let health_monitor = Arc::new(HealthMonitor::new(health_monitor_config)?);
+
+        // Create service manager with proxy server and network manager
         let service_manager = ServiceManager::new(
             Arc::clone(&store),
             Arc::clone(&event_bus),
             config.runtime.max_cached_modules,
+            Some(Arc::clone(&proxy_server)),
+            Some(Arc::clone(&network_manager)),
         )?;
         let service_manager = Arc::new(RwLock::new(service_manager));
 
@@ -85,6 +130,11 @@ impl AppState {
             store,
             event_bus,
             service_manager,
+            service_registry,
+            network_manager,
+            proxy_server,
+            egress_proxy,
+            health_monitor,
             shutdown_tx,
         })
     }
@@ -93,6 +143,46 @@ impl AppState {
     #[must_use]
     pub fn uptime(&self) -> std::time::Duration {
         self.started_at.elapsed()
+    }
+
+    /// Initializes async components after construction.
+    ///
+    /// This must be called after `new()` to set up the HTTP and TCP request routing
+    /// between the proxy server and service manager.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if initialization fails.
+    pub async fn initialize(&self) -> Result<()> {
+        // Set up HTTP request routing from proxy server to service manager
+        let service_manager = Arc::clone(&self.service_manager);
+
+        let request_handler: RequestHandler = Arc::new(move |service_id, request| {
+            let service_manager = Arc::clone(&service_manager);
+            Box::pin(async move {
+                let manager = service_manager.read().await;
+                manager.route_http_request(&service_id, request).await
+            })
+        });
+
+        self.proxy_server.set_request_handler(request_handler).await;
+        info!("HTTP request handler configured");
+
+        // Set up TCP connection routing from proxy server to service manager
+        let service_manager = Arc::clone(&self.service_manager);
+
+        let tcp_handler: TcpConnectionHandler = Arc::new(move |service_id, stream, peer_addr| {
+            let service_manager = Arc::clone(&service_manager);
+            Box::pin(async move {
+                let manager = service_manager.read().await;
+                manager.route_tcp_connection(&service_id, stream, peer_addr).await
+            })
+        });
+
+        self.proxy_server.set_tcp_connection_handler(tcp_handler).await;
+        info!("TCP connection handler configured");
+
+        Ok(())
     }
 
     /// Sends shutdown signal to all listeners.
@@ -146,6 +236,11 @@ mod tests {
         assert!(Arc::ptr_eq(&state.store, &cloned.store));
         assert!(Arc::ptr_eq(&state.event_bus, &cloned.event_bus));
         assert!(Arc::ptr_eq(&state.service_manager, &cloned.service_manager));
+        assert!(Arc::ptr_eq(&state.service_registry, &cloned.service_registry));
+        assert!(Arc::ptr_eq(&state.network_manager, &cloned.network_manager));
+        assert!(Arc::ptr_eq(&state.proxy_server, &cloned.proxy_server));
+        assert!(Arc::ptr_eq(&state.egress_proxy, &cloned.egress_proxy));
+        assert!(Arc::ptr_eq(&state.health_monitor, &cloned.health_monitor));
     }
 
     #[tokio::test]

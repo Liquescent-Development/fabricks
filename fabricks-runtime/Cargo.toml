@@ -24,6 +24,10 @@ fabricks-common = { path = "../fabricks-common" }
 tokio.workspace = true
 wasmtime.workspace = true
 wasmtime-wasi.workspace = true
+wasmtime-wasi-http.workspace = true
+hyper.workspace = true
+http-body-util.workspace = true
+http = "1.2"
 serde.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true

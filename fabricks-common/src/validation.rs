@@ -447,6 +447,7 @@ mod tests {
             info: crate::models::fabrickfile::Info {
                 name: "my-service".to_string(),
                 version: "1.0.0".to_string(),
+                service_type: crate::models::fabrickfile::ServiceType::default(),
                 description: None,
                 authors: None,
                 license: None,
@@ -480,6 +481,7 @@ mod tests {
             info: crate::models::fabrickfile::Info {
                 name: "My_Service".to_string(), // Invalid
                 version: "1.0.0".to_string(),
+                service_type: crate::models::fabrickfile::ServiceType::default(),
                 description: None,
                 authors: None,
                 license: None,

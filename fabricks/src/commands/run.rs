@@ -279,6 +279,7 @@ fn create_minimal_fabrickfile(name: &str) -> Fabrickfile {
         info: fabricks_common::models::fabrickfile::Info {
             name: name.to_string(),
             version: "0.0.0".to_string(),
+            service_type: fabricks_common::models::fabrickfile::ServiceType::default(),
             description: None,
             authors: None,
             license: None,

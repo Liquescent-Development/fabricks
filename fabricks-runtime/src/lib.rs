@@ -43,10 +43,14 @@
 //! ```
 
 pub mod error;
+pub mod http;
 pub mod pool;
 pub mod runtime;
+pub mod tcp;
 
 // Re-export main types
 pub use error::{Result, RuntimeError};
+pub use http::{HttpRuntime, HttpRuntimeConfig, HttpRequest, HttpResponse, OutboundHandler, Scheme, WasiHttpState};
 pub use pool::{RuntimePool, RuntimePoolBuilder};
 pub use runtime::{Runtime, RuntimeConfig};
+pub use tcp::{TcpConnection, TcpRuntime, TcpRuntimeConfig};

@@ -323,6 +323,7 @@ fn parse_config(
         info: fabricks_common::models::fabrickfile::Info {
             name,
             version,
+            service_type: fabricks_common::models::fabrickfile::ServiceType::default(),
             description: annotations.get(media_types::ANNOTATION_DESCRIPTION).cloned(),
             authors: annotations
                 .get(media_types::ANNOTATION_AUTHORS)

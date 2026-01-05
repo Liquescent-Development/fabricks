@@ -14,6 +14,62 @@ use super::health_check::HealthCheck;
 /// The current supported Fabrickfile format version.
 pub const FABRICK_VERSION: &str = "1.0";
 
+/// Service type - determines execution model and WASI interface.
+///
+/// This must be explicitly declared in the Fabrickfile. The daemon uses this
+/// to determine how to instantiate and communicate with the WASM module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ServiceType {
+    /// CLI command that runs to completion (`wasi:cli/run`).
+    ///
+    /// The daemon spawns the WASM, it runs, and exits. This is the default.
+    #[default]
+    Command,
+
+    /// HTTP handler that processes requests (`wasi:http/incoming-handler`).
+    ///
+    /// The daemon binds ports and routes HTTP requests to the handler.
+    /// The WASM works with structured HTTP request/response types.
+    Http,
+
+    /// TCP socket server for raw protocols (`wasi:sockets`).
+    ///
+    /// For services like Redis or Postgres that use custom wire protocols.
+    /// The daemon forwards raw TCP connections to the WASM.
+    Tcp,
+}
+
+impl ServiceType {
+    /// Returns true if this is an HTTP handler service.
+    #[must_use]
+    pub const fn is_http(&self) -> bool {
+        matches!(self, Self::Http)
+    }
+
+    /// Returns true if this is a command service.
+    #[must_use]
+    pub const fn is_command(&self) -> bool {
+        matches!(self, Self::Command)
+    }
+
+    /// Returns true if this is a TCP socket service.
+    #[must_use]
+    pub const fn is_tcp(&self) -> bool {
+        matches!(self, Self::Tcp)
+    }
+}
+
+impl std::fmt::Display for ServiceType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Command => write!(f, "command"),
+            Self::Http => write!(f, "http"),
+            Self::Tcp => write!(f, "tcp"),
+        }
+    }
+}
+
 /// A complete Fabrickfile definition.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Fabrickfile {
@@ -84,6 +140,12 @@ pub struct Info {
 
     /// Semantic version.
     pub version: String,
+
+    /// Service type - determines execution model and WASI interface.
+    ///
+    /// Defaults to `Command` for backward compatibility.
+    #[serde(default, rename = "type")]
+    pub service_type: ServiceType,
 
     /// Human-readable description.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -365,6 +427,7 @@ mod tests {
             info: Info {
                 name: "my-service".to_string(),
                 version: "2.1.0".to_string(),
+                service_type: ServiceType::default(),
                 description: None,
                 authors: None,
                 license: None,
