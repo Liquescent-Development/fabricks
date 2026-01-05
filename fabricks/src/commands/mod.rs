@@ -7,6 +7,7 @@ pub mod inspect;
 pub mod login;
 pub mod logout;
 pub mod mortar;
+pub mod network;
 pub mod pull;
 pub mod push;
 pub mod run;

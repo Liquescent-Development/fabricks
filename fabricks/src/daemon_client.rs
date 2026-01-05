@@ -240,6 +240,112 @@ pub struct ProjectServicesResponse {
     pub total: usize,
 }
 
+// ==================== Network Types ====================
+
+/// Create network request.
+#[derive(Debug, serde::Serialize)]
+pub struct CreateNetworkRequest {
+    /// Network name.
+    pub name: String,
+    /// Optional description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Network access mode.
+    pub access: String,
+    /// Network isolation mode.
+    pub isolation: String,
+}
+
+/// Create network response.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct CreateNetworkResponse {
+    /// Created network ID.
+    pub id: String,
+    /// Network name.
+    pub name: String,
+}
+
+/// List networks response.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct ListNetworksResponse {
+    /// List of networks.
+    pub networks: Vec<NetworkInfo>,
+    /// Total count.
+    pub total: usize,
+}
+
+/// Network information (summary).
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct NetworkInfo {
+    /// Network ID.
+    pub id: String,
+    /// Network name.
+    pub name: String,
+    /// Optional description.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Network access mode.
+    pub access: String,
+    /// Number of members.
+    pub member_count: usize,
+    /// When the network was created.
+    pub created_at: String,
+}
+
+/// Network detail (full information).
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct NetworkDetail {
+    /// Network ID.
+    pub id: String,
+    /// Network name.
+    pub name: String,
+    /// Optional description.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Network access mode.
+    pub access: String,
+    /// Network isolation mode.
+    pub isolation: String,
+    /// Network encryption mode.
+    pub encryption: String,
+    /// Network audit mode.
+    pub audit: String,
+    /// Network members.
+    #[serde(default)]
+    pub members: Vec<NetworkMember>,
+    /// When the network was created.
+    pub created_at: String,
+    /// When the network was last updated.
+    pub updated_at: String,
+}
+
+/// Network member information.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct NetworkMember {
+    /// Service ID.
+    pub service_id: String,
+    /// Service name.
+    pub service_name: String,
+    /// When the service joined.
+    pub joined_at: String,
+}
+
+/// Join network request.
+#[derive(Debug, serde::Serialize)]
+pub struct JoinNetworkRequest {
+    /// Service ID to add.
+    pub service_id: String,
+    /// Service name.
+    pub service_name: String,
+}
+
+/// Leave network request.
+#[derive(Debug, serde::Serialize)]
+pub struct LeaveNetworkRequest {
+    /// Service ID to remove.
+    pub service_id: String,
+}
+
 impl DaemonClient {
     /// Creates a new daemon client.
     ///
@@ -322,6 +428,38 @@ impl DaemonClient {
     /// Tears down a mortar project.
     pub async fn teardown_mortar(&self, name: &str) -> Result<()> {
         self.delete(&format!("/v1/mortar/projects/{name}")).await
+    }
+
+    // ==================== Network Operations ====================
+
+    /// Creates a new network.
+    pub async fn create_network(&self, req: CreateNetworkRequest) -> Result<CreateNetworkResponse> {
+        self.post("/v1/networks", &req).await
+    }
+
+    /// Lists all networks.
+    pub async fn list_networks(&self) -> Result<ListNetworksResponse> {
+        self.get("/v1/networks").await
+    }
+
+    /// Gets details about a specific network.
+    pub async fn get_network(&self, id: &str) -> Result<NetworkDetail> {
+        self.get(&format!("/v1/networks/{id}")).await
+    }
+
+    /// Deletes a network.
+    pub async fn delete_network(&self, id: &str) -> Result<()> {
+        self.delete(&format!("/v1/networks/{id}")).await
+    }
+
+    /// Adds a service to a network.
+    pub async fn join_network(&self, network_id: &str, req: JoinNetworkRequest) -> Result<()> {
+        self.post(&format!("/v1/networks/{network_id}/join"), &req).await
+    }
+
+    /// Removes a service from a network.
+    pub async fn leave_network(&self, network_id: &str, req: LeaveNetworkRequest) -> Result<()> {
+        self.post(&format!("/v1/networks/{network_id}/leave"), &req).await
     }
 
     // ==================== HTTP Methods ====================
