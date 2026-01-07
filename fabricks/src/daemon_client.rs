@@ -310,24 +310,13 @@ pub struct NetworkDetail {
     pub encryption: String,
     /// Network audit mode.
     pub audit: String,
-    /// Network members.
+    /// Member service IDs.
     #[serde(default)]
-    pub members: Vec<NetworkMember>,
+    pub members: Vec<String>,
     /// When the network was created.
     pub created_at: String,
     /// When the network was last updated.
     pub updated_at: String,
-}
-
-/// Network member information.
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
-pub struct NetworkMember {
-    /// Service ID.
-    pub service_id: String,
-    /// Service name.
-    pub service_name: String,
-    /// When the service joined.
-    pub joined_at: String,
 }
 
 /// Join network request.

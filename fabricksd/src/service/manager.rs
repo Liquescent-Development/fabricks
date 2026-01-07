@@ -438,6 +438,42 @@ impl ServiceManager {
             .ok_or_else(|| DaemonError::ServiceNotFound { id: id.to_string() })
     }
 
+    /// Resolves a service ID or name to an ID.
+    ///
+    /// Returns the ID if a service matching the given ID or name exists.
+    pub async fn resolve_service_id(&self, id_or_name: &str) -> Option<String> {
+        let services = self.services.read().await;
+
+        // First try ID lookup
+        if services.contains_key(id_or_name) {
+            return Some(id_or_name.to_string());
+        }
+
+        // Then try name lookup
+        for handle in services.values() {
+            let state = handle.get_state().await;
+            if state.name == id_or_name {
+                return Some(state.id.clone());
+            }
+        }
+
+        None
+    }
+
+    /// Gets service details by ID or name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the service is not found.
+    pub async fn get_service_by_id_or_name(&self, id_or_name: &str) -> Result<ServiceDetail> {
+        let Some(id) = self.resolve_service_id(id_or_name).await else {
+            return Err(DaemonError::ServiceNotFound {
+                id: id_or_name.to_string(),
+            });
+        };
+        self.get_service(&id).await
+    }
+
     /// Routes an HTTP request to the appropriate service.
     ///
     /// This is called by the proxy server's request handler to delegate

@@ -118,6 +118,42 @@ impl NetworkManager {
             .map(NetworkDetail::from)
     }
 
+    /// Gets a network by ID or name.
+    ///
+    /// First tries to match by ID, then by name.
+    pub async fn get_network_by_id_or_name(&self, id_or_name: &str) -> Option<NetworkDetail> {
+        let networks = self.networks.read().await;
+
+        // Try ID lookup first (exact match)
+        if let Some(network) = networks.get(id_or_name) {
+            return Some(NetworkDetail::from(network));
+        }
+
+        // Fall back to name lookup
+        networks
+            .values()
+            .find(|n| n.name == id_or_name)
+            .map(NetworkDetail::from)
+    }
+
+    /// Resolves a network ID or name to an ID.
+    ///
+    /// Returns the network ID if found, or None if not found.
+    pub async fn resolve_network_id(&self, id_or_name: &str) -> Option<String> {
+        let networks = self.networks.read().await;
+
+        // Try ID lookup first (exact match)
+        if networks.contains_key(id_or_name) {
+            return Some(id_or_name.to_string());
+        }
+
+        // Fall back to name lookup
+        networks
+            .values()
+            .find(|n| n.name == id_or_name)
+            .map(|n| n.id.clone())
+    }
+
     /// Lists all networks.
     pub async fn list_networks(&self) -> Vec<NetworkInfo> {
         let networks = self.networks.read().await;
@@ -273,6 +309,37 @@ impl NetworkManager {
         networks_a.iter().any(|n| networks_b.contains(n))
     }
 
+    /// Checks if a service allows external (ingress) access.
+    ///
+    /// Returns true only if the service is a member of at least one network
+    /// with `access: external`. Services not on any network or only on
+    /// `internal` networks cannot be accessed externally.
+    pub async fn service_allows_external_access(&self, service_id: &str) -> bool {
+        let service_networks = self.service_networks.read().await;
+
+        // If service is not on any network, deny external access
+        let Some(network_ids) = service_networks.get(service_id) else {
+            return false;
+        };
+
+        if network_ids.is_empty() {
+            return false;
+        }
+
+        // Check if any network allows external access
+        let networks = self.networks.read().await;
+        for network_id in network_ids {
+            if let Some(network) = networks.get(network_id) {
+                if !network.options.access.is_internal() {
+                    return true;
+                }
+            }
+        }
+
+        // All networks are internal
+        false
+    }
+
     /// Resolves a service name to its ID.
     ///
     /// Uses the service registry to look up the service ID for a given name.
@@ -347,6 +414,7 @@ pub type SharedNetworkManager = Arc<NetworkManager>;
 mod tests {
     use super::*;
     use crate::network::registry::ServiceRegistry;
+    use crate::network::{NetworkAccess, NetworkOptions};
     use std::sync::Arc;
     use tempfile::tempdir;
 
@@ -546,5 +614,108 @@ mod tests {
         assert_eq!(network.name, "named-network");
 
         assert!(manager.get_network_by_name("nonexistent").await.is_none());
+    }
+
+    // ========== External Access Tests ==========
+
+    #[tokio::test]
+    async fn test_external_access_no_network() {
+        let manager = create_test_manager();
+
+        // Service not on any network should not allow external access
+        assert!(!manager.service_allows_external_access("orphan-svc").await);
+    }
+
+    #[tokio::test]
+    async fn test_external_access_on_external_network() {
+        let manager = create_test_manager();
+
+        // Create an external network (default)
+        let config = NetworkConfig::new("external-net".to_string());
+        let id = manager.create_network(config).await.unwrap();
+
+        manager
+            .add_service(&id, "svc-1", "my-service")
+            .await
+            .unwrap();
+
+        // Service on external network should allow external access
+        assert!(manager.service_allows_external_access("svc-1").await);
+    }
+
+    #[tokio::test]
+    async fn test_external_access_on_internal_network() {
+        let manager = create_test_manager();
+
+        // Create an internal network
+        let mut options = NetworkOptions::default();
+        options.access = NetworkAccess::Internal;
+        let config = NetworkConfig::with_options("internal-net".to_string(), options);
+        let id = manager.create_network(config).await.unwrap();
+
+        manager
+            .add_service(&id, "svc-1", "internal-svc")
+            .await
+            .unwrap();
+
+        // Service on internal-only network should not allow external access
+        assert!(!manager.service_allows_external_access("svc-1").await);
+    }
+
+    #[tokio::test]
+    async fn test_external_access_on_mixed_networks() {
+        let manager = create_test_manager();
+
+        // Create an internal network
+        let mut internal_opts = NetworkOptions::default();
+        internal_opts.access = NetworkAccess::Internal;
+        let internal_config = NetworkConfig::with_options("internal".to_string(), internal_opts);
+        let internal_id = manager.create_network(internal_config).await.unwrap();
+
+        // Create an external network
+        let external_config = NetworkConfig::new("external".to_string());
+        let external_id = manager.create_network(external_config).await.unwrap();
+
+        // Add service to both networks
+        manager
+            .add_service(&internal_id, "svc-1", "mixed-svc")
+            .await
+            .unwrap();
+        manager
+            .add_service(&external_id, "svc-1", "mixed-svc")
+            .await
+            .unwrap();
+
+        // Service on at least one external network should allow external access
+        assert!(manager.service_allows_external_access("svc-1").await);
+    }
+
+    #[tokio::test]
+    async fn test_external_access_multiple_internal_networks() {
+        let manager = create_test_manager();
+
+        // Create two internal networks
+        let mut opts1 = NetworkOptions::default();
+        opts1.access = NetworkAccess::Internal;
+        let config1 = NetworkConfig::with_options("internal-1".to_string(), opts1);
+        let id1 = manager.create_network(config1).await.unwrap();
+
+        let mut opts2 = NetworkOptions::default();
+        opts2.access = NetworkAccess::Internal;
+        let config2 = NetworkConfig::with_options("internal-2".to_string(), opts2);
+        let id2 = manager.create_network(config2).await.unwrap();
+
+        // Add service to both internal networks
+        manager
+            .add_service(&id1, "svc-1", "fully-internal")
+            .await
+            .unwrap();
+        manager
+            .add_service(&id2, "svc-1", "fully-internal")
+            .await
+            .unwrap();
+
+        // Service only on internal networks should not allow external access
+        assert!(!manager.service_allows_external_access("svc-1").await);
     }
 }

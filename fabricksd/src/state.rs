@@ -101,7 +101,10 @@ impl AppState {
         let service_router = Arc::new(ServiceRouter::new());
 
         // Create proxy server
-        let proxy_server = Arc::new(ProxyServer::new(Arc::clone(&service_router)));
+        let proxy_server = Arc::new(ProxyServer::new(
+            Arc::clone(&service_router),
+            Arc::clone(&network_manager),
+        ));
 
         // Create egress proxy for outbound requests
         let egress_proxy = Arc::new(EgressProxy::new(Arc::clone(&network_manager))?);

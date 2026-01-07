@@ -161,23 +161,16 @@ async fn inspect_network(client: &DaemonClient, network: &str, format: OutputFor
                 output::writeln("\nMembers: (none)")?;
             } else {
                 output::writeln(&format!("\nMembers ({}):", detail.members.len()))?;
-                output::writeln(&format!(
-                    "  {:<12} {:<20} {}",
-                    "SERVICE ID", "NAME", "JOINED"
-                ))?;
 
-                for member in &detail.members {
+                for service_id in &detail.members {
                     // Truncate ID for display
-                    let short_id = if member.service_id.len() > 12 {
-                        &member.service_id[..12]
+                    let short_id = if service_id.len() > 12 {
+                        &service_id[..12]
                     } else {
-                        &member.service_id
+                        service_id
                     };
 
-                    output::writeln(&format!(
-                        "  {:<12} {:<20} {}",
-                        short_id, member.service_name, member.joined_at
-                    ))?;
+                    output::writeln(&format!("  {short_id}"))?;
                 }
             }
         }

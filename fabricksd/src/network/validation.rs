@@ -1,9 +1,10 @@
 //! Connection validation for network access control.
 //!
-//! Validates outbound connections from services based on:
-//! 1. Capability grants (can the service connect to this target?)
-//! 2. Network membership (do both services share a network?)
-//! 3. Policy rules (future: additional access control policies)
+//! Validates connections based on:
+//! 1. Ingress (external to service): Network access mode (`external` vs `internal`)
+//! 2. Egress capabilities (can the service connect to this target?)
+//! 3. Network membership (do both services share a network?)
+//! 4. Policy rules (future: additional access control policies)
 
 use std::sync::Arc;
 
@@ -152,6 +153,63 @@ pub fn validate_listen_port(capabilities: &Option<Capabilities>, port: u16) -> b
     match capabilities {
         None => false,
         Some(caps) => caps.can_listen(port),
+    }
+}
+
+/// Result of ingress validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IngressDecision {
+    /// Allow the incoming connection.
+    Allow,
+    /// Deny: service only allows internal access.
+    DenyInternal {
+        /// The service ID that rejected external access.
+        service_id: String,
+    },
+}
+
+impl IngressDecision {
+    /// Returns true if the ingress is allowed.
+    #[must_use]
+    pub const fn is_allowed(&self) -> bool {
+        matches!(self, Self::Allow)
+    }
+}
+
+/// Validates an incoming (ingress) connection to a service.
+///
+/// Checks if the target service allows external access based on its network
+/// membership. Services on only `internal` networks will reject external requests.
+///
+/// # Arguments
+///
+/// * `service_id` - The service receiving the connection
+/// * `network_manager` - The network manager for access control
+///
+/// # Returns
+///
+/// An `IngressDecision` indicating whether the connection should be allowed.
+pub async fn validate_ingress(
+    service_id: &str,
+    network_manager: &Arc<NetworkManager>,
+) -> IngressDecision {
+    if network_manager
+        .service_allows_external_access(service_id)
+        .await
+    {
+        debug!(
+            service_id = %service_id,
+            "Allowing external ingress"
+        );
+        IngressDecision::Allow
+    } else {
+        debug!(
+            service_id = %service_id,
+            "Denying external ingress: service only allows internal access"
+        );
+        IngressDecision::DenyInternal {
+            service_id: service_id.to_string(),
+        }
     }
 }
 
@@ -344,5 +402,109 @@ mod tests {
             reason: "test reason".to_string(),
         };
         assert_eq!(deny.denial_reason(), Some("test reason"));
+    }
+
+    // ========== Ingress Validation Tests ==========
+
+    #[tokio::test]
+    async fn test_ingress_deny_no_network() {
+        let manager = create_test_network_manager();
+
+        // Service not on any network should be denied external access
+        let decision = validate_ingress("svc-orphan", &manager).await;
+
+        assert!(!decision.is_allowed());
+        assert!(matches!(decision, IngressDecision::DenyInternal { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_ingress_allow_external_network() {
+        let manager = create_test_network_manager();
+
+        // Create an external network (default)
+        let config = NetworkConfig::new("external-net".to_string());
+        let net_id = manager.create_network(config).await.unwrap();
+
+        // Add service to external network
+        manager
+            .add_service(&net_id, "svc-public", "public-service")
+            .await
+            .unwrap();
+
+        // Service should be allowed external access
+        let decision = validate_ingress("svc-public", &manager).await;
+
+        assert!(decision.is_allowed());
+        assert_eq!(decision, IngressDecision::Allow);
+    }
+
+    #[tokio::test]
+    async fn test_ingress_deny_internal_only_network() {
+        use crate::network::{NetworkAccess, NetworkOptions};
+
+        let manager = create_test_network_manager();
+
+        // Create an internal-only network
+        let mut options = NetworkOptions::default();
+        options.access = NetworkAccess::Internal;
+        let config = NetworkConfig::with_options("internal-net".to_string(), options);
+        let net_id = manager.create_network(config).await.unwrap();
+
+        // Add service to internal network
+        manager
+            .add_service(&net_id, "svc-private", "private-service")
+            .await
+            .unwrap();
+
+        // Service should be denied external access
+        let decision = validate_ingress("svc-private", &manager).await;
+
+        assert!(!decision.is_allowed());
+        assert!(matches!(decision, IngressDecision::DenyInternal { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_ingress_allow_mixed_networks() {
+        use crate::network::{NetworkAccess, NetworkOptions};
+
+        let manager = create_test_network_manager();
+
+        // Create an internal network
+        let mut internal_opts = NetworkOptions::default();
+        internal_opts.access = NetworkAccess::Internal;
+        let internal_config =
+            NetworkConfig::with_options("internal-net".to_string(), internal_opts);
+        let internal_net_id = manager.create_network(internal_config).await.unwrap();
+
+        // Create an external network
+        let external_config = NetworkConfig::new("external-net".to_string());
+        let external_net_id = manager.create_network(external_config).await.unwrap();
+
+        // Add service to BOTH networks
+        manager
+            .add_service(&internal_net_id, "svc-mixed", "mixed-service")
+            .await
+            .unwrap();
+        manager
+            .add_service(&external_net_id, "svc-mixed", "mixed-service")
+            .await
+            .unwrap();
+
+        // Service should be allowed because it's on at least one external network
+        let decision = validate_ingress("svc-mixed", &manager).await;
+
+        assert!(decision.is_allowed());
+        assert_eq!(decision, IngressDecision::Allow);
+    }
+
+    #[test]
+    fn test_ingress_decision_is_allowed() {
+        let allow = IngressDecision::Allow;
+        assert!(allow.is_allowed());
+
+        let deny = IngressDecision::DenyInternal {
+            service_id: "svc-1".to_string(),
+        };
+        assert!(!deny.is_allowed());
     }
 }
