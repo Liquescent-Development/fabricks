@@ -110,17 +110,18 @@ pub async fn list_networks(
 /// GET `/v1/networks/{id}`
 ///
 /// Gets details about a specific network.
+/// The path parameter can be either a network ID or name.
 pub async fn get_network(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id_or_name): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<NetworkDetail>>) {
-    match state.network_manager.get_network(&id).await {
+    match state.network_manager.get_network_by_id_or_name(&id_or_name).await {
         Some(detail) => (StatusCode::OK, Json(ApiResponse::success(detail))),
         None => (
             StatusCode::NOT_FOUND,
             Json(typed_error(
                 "NETWORK_NOT_FOUND",
-                format!("Network '{id}' not found"),
+                format!("Network '{id_or_name}' not found"),
             )),
         ),
     }
@@ -129,19 +130,26 @@ pub async fn get_network(
 /// DELETE `/v1/networks/{id}`
 ///
 /// Deletes a network.
+/// The path parameter can be either a network ID or name.
 pub async fn delete_network(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id_or_name): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<()>>) {
-    match state.network_manager.delete_network(&id).await {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(ApiResponse::success(())),
-        ),
+    // Resolve ID or name to ID
+    let Some(network_id) = state.network_manager.resolve_network_id(&id_or_name).await else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(typed_error(
+                "NETWORK_NOT_FOUND",
+                format!("Network '{id_or_name}' not found"),
+            )),
+        );
+    };
+
+    match state.network_manager.delete_network(&network_id).await {
+        Ok(()) => (StatusCode::OK, Json(ApiResponse::success(()))),
         Err(e) => {
-            let code = if e.to_string().contains("not found") {
-                "NETWORK_NOT_FOUND"
-            } else if e.to_string().contains("has members") {
+            let code = if e.to_string().contains("has members") {
                 "NETWORK_HAS_MEMBERS"
             } else {
                 "NETWORK_DELETE_FAILED"
@@ -157,14 +165,26 @@ pub async fn delete_network(
 /// POST `/v1/networks/{id}/join`
 ///
 /// Adds a service to a network.
+/// The path parameter can be either a network ID or name.
 pub async fn join_network(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id_or_name): Path<String>,
     Json(req): Json<JoinNetworkRequest>,
 ) -> (StatusCode, Json<ApiResponse<()>>) {
+    // Resolve ID or name to ID
+    let Some(network_id) = state.network_manager.resolve_network_id(&id_or_name).await else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(typed_error(
+                "NETWORK_NOT_FOUND",
+                format!("Network '{id_or_name}' not found"),
+            )),
+        );
+    };
+
     match state
         .network_manager
-        .add_service(&id, &req.service_id, &req.service_name)
+        .add_service(&network_id, &req.service_id, &req.service_name)
         .await
     {
         Ok(()) => (StatusCode::OK, Json(ApiResponse::success(()))),
@@ -178,14 +198,26 @@ pub async fn join_network(
 /// POST `/v1/networks/{id}/leave`
 ///
 /// Removes a service from a network.
+/// The path parameter can be either a network ID or name.
 pub async fn leave_network(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id_or_name): Path<String>,
     Json(req): Json<LeaveNetworkRequest>,
 ) -> (StatusCode, Json<ApiResponse<()>>) {
+    // Resolve ID or name to ID
+    let Some(network_id) = state.network_manager.resolve_network_id(&id_or_name).await else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(typed_error(
+                "NETWORK_NOT_FOUND",
+                format!("Network '{id_or_name}' not found"),
+            )),
+        );
+    };
+
     match state
         .network_manager
-        .remove_service(&id, &req.service_id)
+        .remove_service(&network_id, &req.service_id)
         .await
     {
         Ok(()) => (StatusCode::OK, Json(ApiResponse::success(()))),

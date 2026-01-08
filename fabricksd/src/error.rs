@@ -61,6 +61,15 @@ pub enum DaemonError {
     #[error("network '{0}' has members and cannot be deleted")]
     NetworkHasMembers(String),
 
+    /// Network access denied (service only allows internal access).
+    #[error("network access denied for service '{service_id}': {reason}")]
+    NetworkAccessDenied {
+        /// Service ID.
+        service_id: String,
+        /// Reason for denial.
+        reason: String,
+    },
+
     /// Volume not found.
     #[error("volume not found: {id}")]
     VolumeNotFound {

@@ -21,8 +21,9 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::error::{DaemonError, Result};
+use crate::network::{validate_ingress, NetworkManager};
 
-use super::router::{BindingProtocol, ServiceRouter, SharedServiceRouter};
+use super::router::{BindingProtocol, SharedServiceRouter};
 
 /// Handle to a running listener.
 #[derive(Debug)]
@@ -90,6 +91,9 @@ pub struct ProxyServer {
     /// Service router for port-to-service mapping.
     router: SharedServiceRouter,
 
+    /// Network manager for access control.
+    network_manager: Arc<NetworkManager>,
+
     /// HTTP request handler callback.
     request_handler: RwLock<Option<RequestHandler>>,
 
@@ -100,19 +104,14 @@ pub struct ProxyServer {
 impl ProxyServer {
     /// Creates a new proxy server.
     #[must_use]
-    pub fn new(router: SharedServiceRouter) -> Self {
+    pub fn new(router: SharedServiceRouter, network_manager: Arc<NetworkManager>) -> Self {
         Self {
             listeners: RwLock::new(HashMap::new()),
             router,
+            network_manager,
             request_handler: RwLock::new(None),
             tcp_connection_handler: RwLock::new(None),
         }
-    }
-
-    /// Creates a new proxy server with a new router.
-    #[must_use]
-    pub fn with_new_router() -> Self {
-        Self::new(Arc::new(ServiceRouter::new()))
     }
 
     /// Sets the HTTP request handler callback.
@@ -191,6 +190,7 @@ impl ProxyServer {
 
         // Clone what we need for the listener task
         let router = Arc::clone(&self.router);
+        let network_manager = Arc::clone(&self.network_manager);
         let handler_lock = Arc::new(RwLock::new(None::<RequestHandler>));
 
         // Copy current handler reference
@@ -206,6 +206,7 @@ impl ProxyServer {
             actual_port,
             listener,
             router,
+            network_manager,
             handler_lock,
             shutdown_rx,
         ));
@@ -286,6 +287,7 @@ impl ProxyServer {
 
         // Clone what we need for the listener task
         let router = Arc::clone(&self.router);
+        let network_manager = Arc::clone(&self.network_manager);
         let handler_lock = Arc::new(RwLock::new(None::<TcpConnectionHandler>));
 
         // Copy current handler reference
@@ -301,6 +303,7 @@ impl ProxyServer {
             actual_port,
             listener,
             router,
+            network_manager,
             handler_lock,
             shutdown_rx,
         ));
@@ -392,6 +395,7 @@ impl ProxyServer {
         port: u16,
         listener: TcpListener,
         router: SharedServiceRouter,
+        network_manager: Arc<NetworkManager>,
         handler: Arc<RwLock<Option<RequestHandler>>>,
         mut shutdown: broadcast::Receiver<()>,
     ) {
@@ -405,6 +409,7 @@ impl ProxyServer {
                             debug!(port, %addr, "Accepted connection");
 
                             let router = Arc::clone(&router);
+                            let network_manager = Arc::clone(&network_manager);
                             let handler = Arc::clone(&handler);
 
                             tokio::spawn(async move {
@@ -412,6 +417,7 @@ impl ProxyServer {
                                     port,
                                     stream,
                                     router,
+                                    network_manager,
                                     handler,
                                 ).await {
                                     warn!(port, %addr, "Connection error: {}", e);
@@ -441,6 +447,7 @@ impl ProxyServer {
         port: u16,
         listener: TcpListener,
         router: SharedServiceRouter,
+        network_manager: Arc<NetworkManager>,
         handler: Arc<RwLock<Option<TcpConnectionHandler>>>,
         mut shutdown: broadcast::Receiver<()>,
     ) {
@@ -454,6 +461,7 @@ impl ProxyServer {
                             debug!(port, %addr, protocol = "tcp", "Accepted TCP connection");
 
                             let router = Arc::clone(&router);
+                            let network_manager = Arc::clone(&network_manager);
                             let handler = Arc::clone(&handler);
 
                             tokio::spawn(async move {
@@ -462,6 +470,7 @@ impl ProxyServer {
                                     stream,
                                     addr,
                                     router,
+                                    network_manager,
                                     handler,
                                 ).await {
                                     warn!(port, %addr, "TCP connection error: {}", e);
@@ -489,6 +498,7 @@ impl ProxyServer {
         stream: TcpStream,
         peer_addr: SocketAddr,
         router: SharedServiceRouter,
+        network_manager: Arc<NetworkManager>,
         handler: Arc<RwLock<Option<TcpConnectionHandler>>>,
     ) -> Result<()> {
         // Look up the service for this port
@@ -496,6 +506,21 @@ impl ProxyServer {
             warn!(port, "No service bound to TCP port");
             return Err(DaemonError::PortNotBound { port });
         };
+
+        // Validate ingress - check if service allows external access
+        let ingress = validate_ingress(&binding.service_id, &network_manager).await;
+        if !ingress.is_allowed() {
+            warn!(
+                port,
+                %peer_addr,
+                service_id = %binding.service_id,
+                "Ingress denied: service only allows internal access"
+            );
+            return Err(DaemonError::NetworkAccessDenied {
+                service_id: binding.service_id.clone(),
+                reason: "Service only allows internal access".to_string(),
+            });
+        }
 
         // Get the handler
         let handler_opt = {
@@ -520,16 +545,18 @@ impl ProxyServer {
         port: u16,
         stream: tokio::net::TcpStream,
         router: SharedServiceRouter,
+        network_manager: Arc<NetworkManager>,
         handler: Arc<RwLock<Option<RequestHandler>>>,
     ) -> Result<()> {
         let io = TokioIo::new(stream);
 
         let service = service_fn(move |req: Request<hyper::body::Incoming>| {
             let router = Arc::clone(&router);
+            let network_manager = Arc::clone(&network_manager);
             let handler = Arc::clone(&handler);
 
             async move {
-                Self::handle_request(port, req, router, handler).await
+                Self::handle_request(port, req, router, network_manager, handler).await
             }
         });
 
@@ -558,6 +585,7 @@ impl ProxyServer {
         port: u16,
         req: Request<hyper::body::Incoming>,
         router: SharedServiceRouter,
+        network_manager: Arc<NetworkManager>,
         handler: Arc<RwLock<Option<RequestHandler>>>,
     ) -> std::result::Result<Response<Full<Bytes>>, hyper::Error> {
         // Look up the service for this port
@@ -565,6 +593,17 @@ impl ProxyServer {
             warn!(port, "No service bound to port");
             return Ok(Self::error_response(503, "Service unavailable"));
         };
+
+        // Validate ingress - check if service allows external access
+        let ingress = validate_ingress(&binding.service_id, &network_manager).await;
+        if !ingress.is_allowed() {
+            warn!(
+                port,
+                service_id = %binding.service_id,
+                "Ingress denied: service only allows internal access"
+            );
+            return Ok(Self::error_response(403, "Forbidden: Service only allows internal access"));
+        }
 
         // Get the handler
         let handler_opt = {
@@ -638,18 +677,35 @@ impl std::fmt::Debug for ProxyServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::network::ServiceRegistry;
+    use crate::proxy::router::ServiceRouter;
+    use crate::store::StateStore;
+    use tempfile::tempdir;
+
+    fn create_test_network_manager() -> Arc<NetworkManager> {
+        let dir = tempdir().expect("should create temp dir");
+        let db = sled::open(dir.path().join("test.db")).expect("should open db");
+        let state_store = Arc::new(StateStore::new(Arc::new(db)));
+        let registry = Arc::new(ServiceRegistry::new());
+        Arc::new(NetworkManager::new(state_store, registry))
+    }
+
+    fn create_test_server() -> ProxyServer {
+        let router = Arc::new(ServiceRouter::new());
+        let network_manager = create_test_network_manager();
+        ProxyServer::new(router, network_manager)
+    }
 
     #[tokio::test]
     async fn test_proxy_server_creation() {
-        let router = Arc::new(ServiceRouter::new());
-        let server = ProxyServer::new(router);
+        let server = create_test_server();
 
         assert!(server.bound_ports().await.is_empty());
     }
 
     #[tokio::test]
     async fn test_bind_unbind_port() {
-        let server = ProxyServer::with_new_router();
+        let server = create_test_server();
 
         // Bind port (returns actual port)
         let port = server
@@ -673,7 +729,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unbind_service() {
-        let server = ProxyServer::with_new_router();
+        let server = create_test_server();
 
         // Bind multiple ports for same service
         let port1 = server
@@ -698,7 +754,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_shutdown() {
-        let server = ProxyServer::with_new_router();
+        let server = create_test_server();
 
         let _port1 = server
             .bind_port(0, "svc-1".to_string(), "service-one".to_string())
@@ -718,7 +774,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bind_tcp_port() {
-        let server = ProxyServer::with_new_router();
+        let server = create_test_server();
 
         // Bind TCP port (returns actual port)
         let port = server
@@ -748,7 +804,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mixed_http_tcp_ports() {
-        let server = ProxyServer::with_new_router();
+        let server = create_test_server();
 
         // Bind HTTP port
         let http_port = server

@@ -19,4 +19,7 @@ pub use types::{
     NetworkAccess, NetworkAudit, NetworkConfig, NetworkDetail, NetworkEncryption, NetworkInfo,
     NetworkIsolation, NetworkOptions, NetworkState,
 };
-pub use validation::{validate_connection, validate_listen_port, ConnectionDecision};
+pub use validation::{
+    validate_connection, validate_ingress, validate_listen_port, ConnectionDecision,
+    IngressDecision,
+};

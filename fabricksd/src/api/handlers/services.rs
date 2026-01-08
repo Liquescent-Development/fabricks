@@ -150,13 +150,14 @@ pub async fn list_services(State(state): State<AppState>) -> Json<ApiResponse<Li
 /// GET `/v1/services/:id`
 ///
 /// Gets detailed information about a service.
+/// The path parameter can be either a service ID or name.
 pub async fn get_service(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id_or_name): Path<String>,
 ) -> Json<ApiResponse<ServiceDetail>> {
     let manager = state.service_manager.read().await;
 
-    match manager.get_service(&id).await {
+    match manager.get_service_by_id_or_name(&id_or_name).await {
         Ok(detail) => Json(ApiResponse::success(detail)),
         Err(e) => Json(error_response(&e)),
     }

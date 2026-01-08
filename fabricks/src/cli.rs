@@ -83,6 +83,11 @@ pub enum Commands {
     /// Manage multi-service deployments.
     Mortar(MortarArgs),
 
+    /// Network management commands.
+    ///
+    /// Create, manage, and inspect networks.
+    Network(NetworkArgs),
+
     /// List locally stored modules.
     ///
     /// Shows all modules built or pulled to local storage.
@@ -436,4 +441,103 @@ pub enum MortarCommands {
         #[arg(short, long, value_enum, default_value = "text")]
         format: OutputFormat,
     },
+}
+
+/// Arguments for network commands.
+#[derive(Args, Debug)]
+pub struct NetworkArgs {
+    /// Custom socket path.
+    #[arg(long, global = true)]
+    pub socket: Option<PathBuf>,
+
+    #[command(subcommand)]
+    pub command: NetworkCommands,
+}
+
+/// Network subcommands.
+#[derive(Subcommand, Debug)]
+pub enum NetworkCommands {
+    /// Create a new network.
+    Create {
+        /// Network name.
+        name: String,
+
+        /// Network description.
+        #[arg(short, long)]
+        description: Option<String>,
+
+        /// Network access mode (external or internal).
+        #[arg(long, value_enum, default_value = "external")]
+        access: NetworkAccessArg,
+
+        /// Network isolation mode (connected or isolated).
+        #[arg(long, value_enum, default_value = "connected")]
+        isolation: NetworkIsolationArg,
+
+        /// Output format.
+        #[arg(short, long, value_enum, default_value = "text")]
+        format: OutputFormat,
+    },
+
+    /// List all networks.
+    #[command(name = "ls", alias = "list")]
+    List {
+        /// Output format.
+        #[arg(short, long, value_enum, default_value = "text")]
+        format: OutputFormat,
+    },
+
+    /// Get detailed information about a network.
+    #[command(alias = "get")]
+    Inspect {
+        /// Network ID or name.
+        network: String,
+
+        /// Output format.
+        #[arg(short, long, value_enum, default_value = "text")]
+        format: OutputFormat,
+    },
+
+    /// Delete a network.
+    #[command(name = "rm", alias = "remove")]
+    Remove {
+        /// Network ID or name.
+        network: String,
+    },
+
+    /// Add a service to a network.
+    Join {
+        /// Network ID or name.
+        network: String,
+
+        /// Service ID or name.
+        service: String,
+    },
+
+    /// Remove a service from a network.
+    Leave {
+        /// Network ID or name.
+        network: String,
+
+        /// Service ID or name.
+        service: String,
+    },
+}
+
+/// Network access mode argument.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum NetworkAccessArg {
+    /// Allow external access to services.
+    External,
+    /// Internal only, no external access.
+    Internal,
+}
+
+/// Network isolation mode argument.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum NetworkIsolationArg {
+    /// Can communicate with other networks.
+    Connected,
+    /// Completely isolated from other networks.
+    Isolated,
 }

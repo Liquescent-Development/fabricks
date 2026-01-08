@@ -1917,14 +1917,59 @@ cargo test --package fabricks-e2e --test mortar_tests
 
 ## Phase 10: Volume Manager
 
-**Goal:** Manage persistent volumes
+**Goal:** Manage persistent volumes and implement variable substitution for mortar files
 
-**Duration:** 3-4 days
+**Duration:** 4-5 days
 
 ### Tasks
 
-1. **Implement volume manager**
-   
+#### Part A: Variable Substitution
+
+1. **Implement variable resolver**
+
+   `fabricks-common/src/mortar/variables.rs`:
+```rust
+   pub struct VariableResolver {
+       variables: HashMap<String, VariableValue>,
+       env_fallback: bool,
+   }
+
+   #[derive(Debug, Clone)]
+   pub enum VariableValue {
+       String(String),
+       Number(f64),
+       Boolean(bool),
+   }
+
+   impl VariableResolver {
+       /// Resolve all `${variable.*}` references in a string.
+       /// Supports default values: `${variable.foo:-default}`
+       /// Supports env fallback: `${variable.foo:-$ENV_VAR}`
+       pub fn resolve(&self, input: &str) -> Result<String> {
+           // Parse ${variable.name} and ${variable.name:-default} patterns
+           // Replace with resolved values
+       }
+
+       /// Resolve variables in environment map for service config.
+       pub fn resolve_environment(
+           &self,
+           env: &HashMap<String, String>,
+       ) -> Result<HashMap<String, String>> {
+           env.iter()
+               .map(|(k, v)| Ok((k.clone(), self.resolve(v)?)))
+               .collect()
+       }
+   }
+```
+
+2. **Integrate variable resolution into mortar processing**
+
+   Update `fabricks/src/commands/mortar.rs` to resolve variables before service creation.
+
+#### Part B: Volume Manager
+
+3. **Implement volume manager**
+
    `fabricksd/src/volume/manager.rs`:
 ```rust
    pub struct VolumeManager {
@@ -1932,14 +1977,14 @@ cargo test --package fabricks-e2e --test mortar_tests
        base_path: PathBuf,
        state_store: Arc<StateStore>,
    }
-   
+
    impl VolumeManager {
        pub async fn create_volume(&mut self, config: VolumeConfig) -> Result<String> {
            let id = generate_id();
            let path = self.base_path.join(&id);
-           
+
            fs::create_dir_all(&path)?;
-           
+
            let volume = Volume {
                id: id.clone(),
                name: config.name.clone(),
@@ -1947,13 +1992,13 @@ cargo test --package fabricks-e2e --test mortar_tests
                path: path.clone(),
                mounted_by: Vec::new(),
            };
-           
+
            self.volumes.insert(id.clone(), volume.clone());
            self.state_store.save_volume(&volume)?;
-           
+
            Ok(id)
        }
-       
+
        pub fn mount_volume(&mut self, volume_id: &str, service_id: &str) -> Result<PathBuf> {
            let volume = self.volumes.get_mut(volume_id).ok_or(Error::NotFound)?;
            volume.mounted_by.push(service_id.to_string());
@@ -1962,88 +2007,244 @@ cargo test --package fabricks-e2e --test mortar_tests
    }
 ```
 
-2. **Add backup scheduling** (basic implementation)
+4. **Add volume API endpoints**
+
+   - `POST /v1/volumes` - Create a volume
+   - `GET /v1/volumes` - List all volumes
+   - `GET /v1/volumes/{id}` - Get volume details
+   - `DELETE /v1/volumes/{id}` - Delete a volume (must be unmounted)
+
+5. **Integrate volumes into service lifecycle**
+
+   Update `ServiceHandle` to mount volumes when starting services and unmount on stop.
+
+6. **Add backup scheduling** (basic implementation)
 
 ### Success Criteria
 
-- [x] Can create volumes
-- [x] Can mount volumes to services
-- [x] Volume persistence works
-- [x] API endpoints functional
+#### Variable Substitution
+- [ ] `${variable.name}` resolves to variable value
+- [ ] `${variable.name:-default}` uses default when variable undefined
+- [ ] Variables support string, number, and boolean types
+- [ ] Environment variables in service config are resolved before service creation
+
+#### Volume Management
+- [ ] Can create volumes via API
+- [ ] Can mount volumes to services
+- [ ] Volume persistence works across daemon restarts
+- [ ] API endpoints functional for CRUD operations
+- [ ] Cannot delete volume while mounted
 
 ---
 
 ## Phase 11: Auto-Scaler
 
-**Goal:** Automatically scale services based on metrics
+**Goal:** Automatically scale services based on metrics and enforce resource limits
 
-**Duration:** 4-5 days
+**Duration:** 5-7 days
 
 ### Tasks
 
-1. **Implement metrics collection**
-   
+#### Part A: Resource Limits Enforcement
+
+1. **Implement memory limits via Wasmtime**
+
+   `fabricks-runtime/src/limits.rs`:
+```rust
+   use wasmtime::{ResourceLimiter, Store};
+
+   pub struct WasmResourceLimiter {
+       memory_limit: usize,      // Max bytes
+       memory_used: usize,
+       table_elements: u32,
+   }
+
+   impl ResourceLimiter for WasmResourceLimiter {
+       fn memory_growing(
+           &mut self,
+           current: usize,
+           desired: usize,
+           maximum: Option<usize>,
+       ) -> Result<bool, anyhow::Error> {
+           let would_use = self.memory_used + (desired - current);
+           if would_use > self.memory_limit {
+               return Ok(false); // Deny growth
+           }
+           self.memory_used = would_use;
+           Ok(true)
+       }
+
+       fn table_growing(
+           &mut self,
+           current: u32,
+           desired: u32,
+           maximum: Option<u32>,
+       ) -> Result<bool, anyhow::Error> {
+           Ok(desired <= self.table_elements)
+       }
+   }
+```
+
+2. **Implement CPU limits via fuel metering**
+
+   `fabricks-runtime/src/http/runtime.rs` (update):
+```rust
+   impl HttpRuntime {
+       pub fn new_with_limits(
+           wasm_bytes: &[u8],
+           config: HttpRuntimeConfig,
+           limits: ResourceLimits,
+       ) -> Result<Self> {
+           let mut engine_config = Config::new();
+           engine_config.consume_fuel(true); // Enable fuel metering
+
+           let engine = Engine::new(&engine_config)?;
+           // ... rest of initialization
+
+           // Configure fuel based on CPU limit
+           // 1.0 CPU = 1_000_000_000 fuel units per second (approximate)
+       }
+
+       pub async fn handle_request_with_limits(
+           &self,
+           request: Request<Incoming>,
+           fuel_limit: u64,
+       ) -> Result<Response<BoxBody>> {
+           let mut store = self.create_store()?;
+           store.set_fuel(fuel_limit)?;
+
+           // Execute request
+           // If fuel exhausted, returns error
+       }
+   }
+```
+
+3. **Parse and apply resource config from Fabrickfile**
+
+   Update `ServiceHandle` to pass resource limits to runtime:
+```rust
+   // From Fabrickfile [config.resources]
+   pub struct ResourceLimits {
+       pub memory: Option<ByteSize>,  // e.g., "256Mi"
+       pub cpu: Option<f64>,          // e.g., 0.5 (half a core)
+   }
+```
+
+#### Part B: Metrics Collection
+
+4. **Implement metrics collection**
+
    `fabricksd/src/scaler/metrics.rs`:
 ```rust
    pub struct MetricsCollector {
        metrics: Arc<RwLock<HashMap<String, ServiceMetrics>>>,
    }
-   
+
+   #[derive(Debug, Clone)]
+   pub struct ServiceMetrics {
+       pub memory_used: usize,
+       pub memory_limit: usize,
+       pub fuel_consumed: u64,       // Proxy for CPU usage
+       pub request_count: u64,
+       pub request_latency_p50: Duration,
+       pub request_latency_p99: Duration,
+   }
+
    impl MetricsCollector {
        pub async fn collect(&self, service_id: &str) -> ServiceMetrics {
-           // Collect CPU, memory, request rate
-           // This is simplified - real implementation would use proper metrics
-           ServiceMetrics {
-               cpu_usage: self.get_cpu_usage(service_id),
-               memory_usage: self.get_memory_usage(service_id),
-               request_rate: self.get_request_rate(service_id),
-           }
+           // Collect from runtime instances
+           // Aggregate across replicas
+       }
+
+       pub fn record_request(&self, service_id: &str, latency: Duration, fuel_used: u64) {
+           // Called after each request completes
        }
    }
 ```
 
-2. **Implement auto-scaler**
-   
+#### Part C: Auto-Scaler
+
+5. **Implement auto-scaler**
+
    `fabricksd/src/scaler/autoscaler.rs`:
 ```rust
    pub struct AutoScaler {
        service_manager: Arc<RwLock<ServiceManager>>,
-       metrics_collector: MetricsCollector,
+       metrics_collector: Arc<MetricsCollector>,
        cooldown: HashMap<String, Instant>,
    }
-   
+
    impl AutoScaler {
        pub async fn run(&mut self) {
            loop {
-               let services = self.get_scalable_services();
-               
+               let services = self.get_scalable_services().await;
+
                for service in services {
                    if self.in_cooldown(&service.id) {
                        continue;
                    }
-                   
+
                    let metrics = self.metrics_collector.collect(&service.id).await;
-                   
-                   if metrics.cpu_usage > service.config.cpu_threshold {
-                       self.scale_up(&service.id).await;
-                   } else if metrics.cpu_usage < service.config.cpu_threshold / 2 {
-                       self.scale_down(&service.id).await;
+                   let config = &service.config.replicas;
+
+                   // Scale based on CPU threshold
+                   let cpu_percent = self.calculate_cpu_percent(&metrics);
+                   if cpu_percent > config.cpu_threshold.unwrap_or(80) {
+                       self.scale_up(&service.id, config).await;
+                   } else if cpu_percent < config.cpu_threshold.unwrap_or(80) / 2 {
+                       self.scale_down(&service.id, config).await;
                    }
                }
-               
+
                tokio::time::sleep(Duration::from_secs(30)).await;
+           }
+       }
+
+       async fn scale_up(&mut self, service_id: &str, config: &ReplicaConfig) {
+           let current = self.get_replica_count(service_id).await;
+           if current < config.max {
+               self.service_manager.write().await
+                   .scale_service(service_id, current + 1).await;
+               self.set_cooldown(service_id);
+           }
+       }
+
+       async fn scale_down(&mut self, service_id: &str, config: &ReplicaConfig) {
+           let current = self.get_replica_count(service_id).await;
+           if current > config.min {
+               self.service_manager.write().await
+                   .scale_service(service_id, current - 1).await;
+               self.set_cooldown(service_id);
            }
        }
    }
 ```
 
+6. **Add metrics API endpoints**
+
+   - `GET /v1/services/{id}/metrics` - Get service metrics
+   - `GET /v1/metrics` - Get all service metrics summary
+
 ### Success Criteria
 
-- [x] Metrics collection works
-- [x] Auto-scaling up works
-- [x] Auto-scaling down works
-- [x] Cooldown prevents thrashing
-- [x] Respects min/max replicas
+#### Resource Limits
+- [ ] Memory limits enforced via Wasmtime `ResourceLimiter`
+- [ ] CPU limits enforced via fuel metering
+- [ ] Service fails gracefully when limits exceeded (not crash)
+- [ ] Limits parsed from Fabrickfile `[config.resources]` section
+
+#### Metrics Collection
+- [ ] Memory usage tracked per service
+- [ ] Request count and latency tracked
+- [ ] Metrics aggregated across replicas
+- [ ] API endpoints return current metrics
+
+#### Auto-Scaling
+- [ ] Auto-scaling up works when CPU threshold exceeded
+- [ ] Auto-scaling down works when utilization low
+- [ ] Cooldown prevents thrashing
+- [ ] Respects min/max replicas from config
+- [ ] Scaling events logged and published to event bus
 
 ---
 
