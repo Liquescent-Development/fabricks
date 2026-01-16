@@ -16,12 +16,12 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::error::{DaemonError, Result};
-use crate::network::{validate_ingress, NetworkManager};
+use crate::network::{NetworkManager, validate_ingress};
 
 use super::router::{BindingProtocol, SharedServiceRouter};
 
@@ -56,9 +56,8 @@ impl ListenerHandle {
 /// The proxy server calls this callback with the service ID and request,
 /// and expects an HTTP response. This allows the daemon to inject its own
 /// logic for routing requests to WASM runtimes.
-pub type RequestHandler = Arc<
-    dyn Fn(String, fabricks_runtime::HttpRequest) -> RequestFuture + Send + Sync,
->;
+pub type RequestHandler =
+    Arc<dyn Fn(String, fabricks_runtime::HttpRequest) -> RequestFuture + Send + Sync>;
 
 /// Future returned by the request handler.
 pub type RequestFuture = std::pin::Pin<
@@ -70,14 +69,12 @@ pub type RequestFuture = std::pin::Pin<
 /// The proxy server calls this callback with the service ID, TCP stream, and
 /// peer address. The callback should route the connection to the appropriate
 /// WASM runtime (inetd model - stdin/stdout connected to the stream).
-pub type TcpConnectionHandler = Arc<
-    dyn Fn(String, TcpStream, SocketAddr) -> TcpConnectionFuture + Send + Sync,
->;
+pub type TcpConnectionHandler =
+    Arc<dyn Fn(String, TcpStream, SocketAddr) -> TcpConnectionFuture + Send + Sync>;
 
 /// Future returned by the TCP connection handler.
-pub type TcpConnectionFuture = std::pin::Pin<
-    Box<dyn std::future::Future<Output = Result<()>> + Send>,
->;
+pub type TcpConnectionFuture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send>>;
 
 /// Proxy server that manages port listeners and routes requests.
 ///
@@ -158,15 +155,20 @@ impl ProxyServer {
     /// - The port is already bound to another service
     /// - The port cannot be bound (permission denied, in use, etc.)
     #[instrument(skip(self), fields(port, service_id, service_name))]
-    pub async fn bind_port(&self, port: u16, service_id: String, service_name: String) -> Result<u16> {
+    pub async fn bind_port(
+        &self,
+        port: u16,
+        service_id: String,
+        service_name: String,
+    ) -> Result<u16> {
         // Try to bind the TCP listener first to get actual port
         let addr = SocketAddr::from(([0, 0, 0, 0], port));
-        let listener = TcpListener::bind(addr).await.map_err(|e| {
-            DaemonError::PortBindError {
+        let listener = TcpListener::bind(addr)
+            .await
+            .map_err(|e| DaemonError::PortBindError {
                 port,
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
 
         // Get the actual bound port (important when port 0 was requested)
         let actual_port = listener
@@ -253,12 +255,12 @@ impl ProxyServer {
     ) -> Result<u16> {
         // Try to bind the TCP listener first to get actual port
         let addr = SocketAddr::from(([0, 0, 0, 0], port));
-        let listener = TcpListener::bind(addr).await.map_err(|e| {
-            DaemonError::PortBindError {
+        let listener = TcpListener::bind(addr)
+            .await
+            .map_err(|e| DaemonError::PortBindError {
                 port,
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
 
         // Get the actual bound port (important when port 0 was requested)
         let actual_port = listener
@@ -555,9 +557,7 @@ impl ProxyServer {
             let network_manager = Arc::clone(&network_manager);
             let handler = Arc::clone(&handler);
 
-            async move {
-                Self::handle_request(port, req, router, network_manager, handler).await
-            }
+            async move { Self::handle_request(port, req, router, network_manager, handler).await }
         });
 
         http1::Builder::new()
@@ -575,9 +575,7 @@ impl ProxyServer {
         Response::builder()
             .status(status)
             .body(Full::new(Bytes::from(message.to_string())))
-            .unwrap_or_else(|_| {
-                Response::new(Full::new(Bytes::from("Internal error")))
-            })
+            .unwrap_or_else(|_| Response::new(Full::new(Bytes::from("Internal error"))))
     }
 
     /// Handles a single HTTP request.
@@ -602,7 +600,10 @@ impl ProxyServer {
                 service_id = %binding.service_id,
                 "Ingress denied: service only allows internal access"
             );
-            return Ok(Self::error_response(403, "Forbidden: Service only allows internal access"));
+            return Ok(Self::error_response(
+                403,
+                "Forbidden: Service only allows internal access",
+            ));
         }
 
         // Get the handler

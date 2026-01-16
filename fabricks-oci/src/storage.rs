@@ -98,9 +98,11 @@ impl LocalStorage {
     /// Initialize the OCI layout directory structure.
     async fn init(&self) -> Result<()> {
         // Create directories
-        fs::create_dir_all(self.blobs_dir()).await.map_err(|e| OciError::StorageError {
-            reason: format!("failed to create blobs directory: {e}"),
-        })?;
+        fs::create_dir_all(self.blobs_dir())
+            .await
+            .map_err(|e| OciError::StorageError {
+                reason: format!("failed to create blobs directory: {e}"),
+            })?;
 
         // Write oci-layout file
         let layout = OciLayout {
@@ -178,11 +180,9 @@ impl LocalStorage {
                 reason: format!("failed to write blob: {e}"),
             })?;
 
-        file.sync_all()
-            .await
-            .map_err(|e| OciError::StorageError {
-                reason: format!("failed to sync blob: {e}"),
-            })?;
+        file.sync_all().await.map_err(|e| OciError::StorageError {
+            reason: format!("failed to sync blob: {e}"),
+        })?;
 
         fs::rename(&temp_path, &blob_path)
             .await
@@ -272,11 +272,12 @@ impl LocalStorage {
         manifest_size: i64,
     ) -> Result<()> {
         let index_path = self.base_path.join("index.json");
-        let index_content = fs::read_to_string(&index_path)
-            .await
-            .map_err(|e| OciError::StorageError {
-                reason: format!("failed to read index: {e}"),
-            })?;
+        let index_content =
+            fs::read_to_string(&index_path)
+                .await
+                .map_err(|e| OciError::StorageError {
+                    reason: format!("failed to read index: {e}"),
+                })?;
 
         let mut index: ImageIndex =
             serde_json::from_str(&index_content).map_err(|e| OciError::StorageError {
@@ -329,20 +330,24 @@ impl LocalStorage {
     /// Returns an error if the reference is not found.
     pub async fn get_manifest_digest(&self, reference: &str) -> Result<String> {
         let index_path = self.base_path.join("index.json");
-        let index_content = fs::read_to_string(&index_path)
-            .await
-            .map_err(|e| OciError::StorageError {
-                reason: format!("failed to read index: {e}"),
-            })?;
+        let index_content =
+            fs::read_to_string(&index_path)
+                .await
+                .map_err(|e| OciError::StorageError {
+                    reason: format!("failed to read index: {e}"),
+                })?;
 
         let index: ImageIndex =
             serde_json::from_str(&index_content).map_err(|e| OciError::StorageError {
                 reason: format!("failed to parse index: {e}"),
             })?;
 
-        let manifests = index.manifests.as_ref().ok_or_else(|| OciError::StorageError {
-            reason: "index has no manifests".to_string(),
-        })?;
+        let manifests = index
+            .manifests
+            .as_ref()
+            .ok_or_else(|| OciError::StorageError {
+                reason: "index has no manifests".to_string(),
+            })?;
 
         for manifest in manifests {
             if let Some(annotations) = &manifest.annotations
@@ -365,11 +370,12 @@ impl LocalStorage {
     /// Returns an error if reading the index fails.
     pub async fn list_references(&self) -> Result<Vec<String>> {
         let index_path = self.base_path.join("index.json");
-        let index_content = fs::read_to_string(&index_path)
-            .await
-            .map_err(|e| OciError::StorageError {
-                reason: format!("failed to read index: {e}"),
-            })?;
+        let index_content =
+            fs::read_to_string(&index_path)
+                .await
+                .map_err(|e| OciError::StorageError {
+                    reason: format!("failed to read index: {e}"),
+                })?;
 
         let index: ImageIndex =
             serde_json::from_str(&index_content).map_err(|e| OciError::StorageError {
@@ -405,7 +411,9 @@ mod tests {
     #[tokio::test]
     async fn test_storage_init() {
         let temp = TempDir::new().expect("Failed to create temp directory");
-        let storage = LocalStorage::new(temp.path()).await.expect("Failed to create storage");
+        let storage = LocalStorage::new(temp.path())
+            .await
+            .expect("Failed to create storage");
 
         assert!(temp.path().join("oci-layout").exists());
         assert!(temp.path().join("index.json").exists());
@@ -416,10 +424,15 @@ mod tests {
     #[tokio::test]
     async fn test_store_and_get_blob() {
         let temp = TempDir::new().expect("Failed to create temp directory");
-        let storage = LocalStorage::new(temp.path()).await.expect("Failed to create storage");
+        let storage = LocalStorage::new(temp.path())
+            .await
+            .expect("Failed to create storage");
 
         let data = b"hello world";
-        let digest = storage.store_blob(data).await.expect("Failed to store blob");
+        let digest = storage
+            .store_blob(data)
+            .await
+            .expect("Failed to store blob");
 
         assert!(digest.starts_with("sha256:"));
         assert!(storage.has_blob(&digest));
@@ -431,11 +444,19 @@ mod tests {
     #[tokio::test]
     async fn test_blob_deduplication() {
         let temp = TempDir::new().expect("Failed to create temp directory");
-        let storage = LocalStorage::new(temp.path()).await.expect("Failed to create storage");
+        let storage = LocalStorage::new(temp.path())
+            .await
+            .expect("Failed to create storage");
 
         let data = b"duplicate content";
-        let digest1 = storage.store_blob(data).await.expect("Failed to store blob");
-        let digest2 = storage.store_blob(data).await.expect("Failed to store blob");
+        let digest1 = storage
+            .store_blob(data)
+            .await
+            .expect("Failed to store blob");
+        let digest2 = storage
+            .store_blob(data)
+            .await
+            .expect("Failed to store blob");
 
         assert_eq!(digest1, digest2);
     }
@@ -443,14 +464,22 @@ mod tests {
     #[tokio::test]
     async fn test_delete_blob() {
         let temp = TempDir::new().expect("Failed to create temp directory");
-        let storage = LocalStorage::new(temp.path()).await.expect("Failed to create storage");
+        let storage = LocalStorage::new(temp.path())
+            .await
+            .expect("Failed to create storage");
 
         let data = b"to be deleted";
-        let digest = storage.store_blob(data).await.expect("Failed to store blob");
+        let digest = storage
+            .store_blob(data)
+            .await
+            .expect("Failed to store blob");
 
         assert!(storage.has_blob(&digest));
 
-        storage.delete_blob(&digest).await.expect("Failed to delete blob");
+        storage
+            .delete_blob(&digest)
+            .await
+            .expect("Failed to delete blob");
 
         assert!(!storage.has_blob(&digest));
     }
@@ -458,7 +487,9 @@ mod tests {
     #[tokio::test]
     async fn test_index_operations() {
         let temp = TempDir::new().expect("Failed to create temp directory");
-        let storage = LocalStorage::new(temp.path()).await.expect("Failed to create storage");
+        let storage = LocalStorage::new(temp.path())
+            .await
+            .expect("Failed to create storage");
 
         let digest = "sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abc1";
 
@@ -467,7 +498,10 @@ mod tests {
             .await
             .expect("Failed to add to index");
 
-        let refs = storage.list_references().await.expect("Failed to list references");
+        let refs = storage
+            .list_references()
+            .await
+            .expect("Failed to list references");
         assert!(refs.contains(&"mymodule:1.0.0".to_string()));
 
         let found_digest = storage
@@ -480,7 +514,9 @@ mod tests {
     #[tokio::test]
     async fn test_index_update_same_reference() {
         let temp = TempDir::new().expect("Failed to create temp directory");
-        let storage = LocalStorage::new(temp.path()).await.expect("Failed to create storage");
+        let storage = LocalStorage::new(temp.path())
+            .await
+            .expect("Failed to create storage");
 
         let digest1 = "sha256:111111111111111111111111111111111111111111111111111111111111111a";
         let digest2 = "sha256:222222222222222222222222222222222222222222222222222222222222222b";

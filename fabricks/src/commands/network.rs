@@ -2,7 +2,9 @@
 
 use anyhow::{Context, Result};
 
-use crate::cli::{NetworkAccessArg, NetworkArgs, NetworkCommands, NetworkIsolationArg, OutputFormat};
+use crate::cli::{
+    NetworkAccessArg, NetworkArgs, NetworkCommands, NetworkIsolationArg, OutputFormat,
+};
 use crate::daemon_client::{
     CreateNetworkRequest, DaemonClient, JoinNetworkRequest, LeaveNetworkRequest,
 };
@@ -26,15 +28,23 @@ pub async fn run(args: &NetworkArgs) -> Result<()> {
             access,
             isolation,
             format,
-        } => create_network(&client, name, description.clone(), *access, *isolation, *format).await,
+        } => {
+            create_network(
+                &client,
+                name,
+                description.clone(),
+                *access,
+                *isolation,
+                *format,
+            )
+            .await
+        }
         NetworkCommands::List { format } => list_networks(&client, *format).await,
         NetworkCommands::Inspect { network, format } => {
             inspect_network(&client, network, *format).await
         }
         NetworkCommands::Remove { network } => remove_network(&client, network).await,
-        NetworkCommands::Join { network, service } => {
-            join_network(&client, network, service).await
-        }
+        NetworkCommands::Join { network, service } => join_network(&client, network, service).await,
         NetworkCommands::Leave { network, service } => {
             leave_network(&client, network, service).await
         }

@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use crate::cli::{MortarArgs, MortarCommands, OutputFormat};
 use crate::daemon_client::DaemonClient;
@@ -36,10 +36,7 @@ async fn deploy_mortar(client: &DaemonClient, path: &Path, format: OutputFormat)
         if candidate.exists() {
             candidate
         } else {
-            bail!(
-                "No fabricks-mortar.toml found at {}",
-                path.display()
-            );
+            bail!("No fabricks-mortar.toml found at {}", path.display());
         }
     };
 
@@ -56,7 +53,10 @@ async fn deploy_mortar(client: &DaemonClient, path: &Path, format: OutputFormat)
             output::writeln(&json)?;
         }
         OutputFormat::Text => {
-            output::writeln(&format!("Project '{}' deployed successfully.", response.project))?;
+            output::writeln(&format!(
+                "Project '{}' deployed successfully.",
+                response.project
+            ))?;
             output::writeln("")?;
             output::writeln("Services created:")?;
             for id in &response.service_ids {

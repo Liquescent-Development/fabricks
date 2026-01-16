@@ -1,6 +1,6 @@
 //! Daemon management API handlers.
 
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
@@ -102,10 +102,7 @@ mod tests {
 
     #[test]
     fn test_format_uptime_minutes() {
-        assert_eq!(
-            format_uptime(std::time::Duration::from_secs(125)),
-            "2m 5s"
-        );
+        assert_eq!(format_uptime(std::time::Duration::from_secs(125)), "2m 5s");
     }
 
     #[test]

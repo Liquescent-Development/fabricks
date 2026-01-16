@@ -14,3 +14,4 @@ pub mod run;
 pub mod service;
 pub mod validate;
 pub mod version;
+pub mod volume;

@@ -11,8 +11,8 @@ use tracing::{debug, info};
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::WasiCtxBuilder;
-use wasmtime_wasi_http::bindings::http::types::Scheme as WasiScheme;
 use wasmtime_wasi_http::bindings::Proxy;
+use wasmtime_wasi_http::bindings::http::types::Scheme as WasiScheme;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
 
 use fabricks_common::Capabilities;
@@ -20,6 +20,7 @@ use fabricks_common::Capabilities;
 use super::state::{OutboundHandler, WasiHttpState};
 use super::types::{HttpRequest, HttpResponse, Scheme};
 use crate::error::{Result, RuntimeError};
+use crate::runtime::VolumeMountConfig;
 
 /// Configuration for the HTTP runtime.
 #[derive(Debug, Clone, Default)]
@@ -35,6 +36,9 @@ pub struct HttpRuntimeConfig {
 
     /// Enable epoch-based interruption.
     pub epoch_interruption: bool,
+
+    /// Volume mounts for persistent storage.
+    pub volume_mounts: Vec<VolumeMountConfig>,
 }
 
 /// HTTP runtime for WASM components implementing `wasi:http/incoming-handler`.
@@ -192,9 +196,11 @@ impl HttpRuntime {
             })?;
 
         // Get the response from the channel
-        let response = response_rx.await.map_err(|_| RuntimeError::ExecutionError {
-            reason: "Response channel closed".to_string(),
-        })?;
+        let response = response_rx
+            .await
+            .map_err(|_| RuntimeError::ExecutionError {
+                reason: "Response channel closed".to_string(),
+            })?;
 
         self.convert_response(response).await
     }
@@ -231,9 +237,11 @@ impl HttpRuntime {
         let boxed_body: http_body_util::combinators::BoxBody<Bytes, hyper::Error> =
             http_body_util::BodyExt::boxed(body);
 
-        let http_request = builder.body(boxed_body).map_err(|e| RuntimeError::ExecutionError {
-            reason: format!("Failed to build request: {e}"),
-        })?;
+        let http_request = builder
+            .body(boxed_body)
+            .map_err(|e| RuntimeError::ExecutionError {
+                reason: format!("Failed to build request: {e}"),
+            })?;
 
         // Convert scheme
         let scheme = match request.scheme {
@@ -331,6 +339,9 @@ impl HttpRuntime {
         // Configure filesystem access (based on capabilities)
         self.configure_filesystem(&mut builder)?;
 
+        // Configure volume mounts
+        self.configure_volume_mounts(&mut builder)?;
+
         Ok(builder.build())
     }
 
@@ -409,6 +420,48 @@ impl HttpRuntime {
                         })?;
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    /// Configure volume mounts for persistent storage.
+    fn configure_volume_mounts(&self, builder: &mut WasiCtxBuilder) -> Result<()> {
+        use wasmtime_wasi::{DirPerms, FilePerms};
+
+        if self.config.volume_mounts.is_empty() {
+            return Ok(());
+        }
+
+        for mount in &self.config.volume_mounts {
+            if !mount.host_path.exists() {
+                debug!(
+                    host_path = %mount.host_path.display(),
+                    guest_path = %mount.guest_path,
+                    "Volume mount host path does not exist, skipping"
+                );
+                continue;
+            }
+
+            let (dir_perms, file_perms) = if mount.read_only {
+                (DirPerms::READ, FilePerms::READ)
+            } else {
+                (DirPerms::all(), FilePerms::READ | FilePerms::WRITE)
+            };
+
+            debug!(
+                host_path = %mount.host_path.display(),
+                guest_path = %mount.guest_path,
+                read_only = mount.read_only,
+                "Mounting volume"
+            );
+
+            builder
+                .preopened_dir(&mount.host_path, &mount.guest_path, dir_perms, file_perms)
+                .map_err(|e| RuntimeError::FilesystemDenied {
+                    path: mount.host_path.clone(),
+                    operation: format!("mount volume at {}: {e}", mount.guest_path),
+                })?;
         }
 
         Ok(())

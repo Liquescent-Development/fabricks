@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    Json,
 };
 use serde::Serialize;
 
@@ -168,7 +168,10 @@ pub async fn get_proxy_bindings(
 
     let total = bindings.len();
 
-    Json(ApiResponse::success(ProxyBindingsResponse { bindings, total }))
+    Json(ApiResponse::success(ProxyBindingsResponse {
+        bindings,
+        total,
+    }))
 }
 
 #[cfg(test)]

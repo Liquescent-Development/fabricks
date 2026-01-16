@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use sled::Db;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 
 use tracing::info;
 
@@ -16,6 +16,7 @@ use crate::network::{NetworkManager, ServiceRegistry};
 use crate::proxy::{EgressProxy, ProxyServer, RequestHandler, ServiceRouter, TcpConnectionHandler};
 use crate::service::ServiceManager;
 use crate::store::StateStore;
+use crate::volume::VolumeManager;
 
 /// Shared daemon state accessible from all handlers.
 ///
@@ -55,6 +56,9 @@ pub struct AppState {
 
     /// Health monitor for service health tracking.
     pub health_monitor: Arc<HealthMonitor>,
+
+    /// Volume manager for persistent storage.
+    pub volume_manager: Arc<VolumeManager>,
 
     /// Shutdown signal sender.
     shutdown_tx: broadcast::Sender<()>,
@@ -113,13 +117,18 @@ impl AppState {
         let health_monitor_config = HealthMonitorConfig::default();
         let health_monitor = Arc::new(HealthMonitor::new(health_monitor_config)?);
 
-        // Create service manager with proxy server and network manager
+        // Create volume manager
+        let volumes_path = config.daemon.data_dir.join("volumes");
+        let volume_manager = Arc::new(VolumeManager::new(Arc::clone(&store), volumes_path));
+
+        // Create service manager with proxy server, network manager, and volume manager
         let service_manager = ServiceManager::new(
             Arc::clone(&store),
             Arc::clone(&event_bus),
             config.runtime.max_cached_modules,
             Some(Arc::clone(&proxy_server)),
             Some(Arc::clone(&network_manager)),
+            Some(Arc::clone(&volume_manager)),
         )?;
         let service_manager = Arc::new(RwLock::new(service_manager));
 
@@ -138,6 +147,7 @@ impl AppState {
             proxy_server,
             egress_proxy,
             health_monitor,
+            volume_manager,
             shutdown_tx,
         })
     }
@@ -178,11 +188,15 @@ impl AppState {
             let service_manager = Arc::clone(&service_manager);
             Box::pin(async move {
                 let manager = service_manager.read().await;
-                manager.route_tcp_connection(&service_id, stream, peer_addr).await
+                manager
+                    .route_tcp_connection(&service_id, stream, peer_addr)
+                    .await
             })
         });
 
-        self.proxy_server.set_tcp_connection_handler(tcp_handler).await;
+        self.proxy_server
+            .set_tcp_connection_handler(tcp_handler)
+            .await;
         info!("TCP connection handler configured");
 
         Ok(())
@@ -239,11 +253,15 @@ mod tests {
         assert!(Arc::ptr_eq(&state.store, &cloned.store));
         assert!(Arc::ptr_eq(&state.event_bus, &cloned.event_bus));
         assert!(Arc::ptr_eq(&state.service_manager, &cloned.service_manager));
-        assert!(Arc::ptr_eq(&state.service_registry, &cloned.service_registry));
+        assert!(Arc::ptr_eq(
+            &state.service_registry,
+            &cloned.service_registry
+        ));
         assert!(Arc::ptr_eq(&state.network_manager, &cloned.network_manager));
         assert!(Arc::ptr_eq(&state.proxy_server, &cloned.proxy_server));
         assert!(Arc::ptr_eq(&state.egress_proxy, &cloned.egress_proxy));
         assert!(Arc::ptr_eq(&state.health_monitor, &cloned.health_monitor));
+        assert!(Arc::ptr_eq(&state.volume_manager, &cloned.volume_manager));
     }
 
     #[tokio::test]

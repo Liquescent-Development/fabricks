@@ -5,3 +5,4 @@ pub mod health;
 pub mod mortar;
 pub mod networks;
 pub mod services;
+pub mod volumes;

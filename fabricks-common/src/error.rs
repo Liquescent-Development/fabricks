@@ -193,3 +193,14 @@ impl From<ValidationError> for ParseError {
         Self::ValidationError { source }
     }
 }
+
+/// General errors in the common library.
+#[derive(Debug, Error)]
+pub enum CommonError {
+    /// Variable resolution failed.
+    #[error("failed to resolve variables: {0}")]
+    VariableResolution(String),
+}
+
+/// Result type for common library operations.
+pub type Result<T> = std::result::Result<T, CommonError>;

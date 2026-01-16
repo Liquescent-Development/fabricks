@@ -5,9 +5,9 @@
 use std::path::Path;
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use fabricks_common::parser::FABRICKFILE_NAME;
-use fabricks_common::{parse_fabrickfile, Fabrickfile};
+use fabricks_common::{Fabrickfile, parse_fabrickfile};
 use fabricks_oci::{FabricksModule, LocalStorage};
 use tracing::{debug, info};
 
@@ -30,7 +30,10 @@ pub async fn run(args: &BuildArgs) -> Result<()> {
         .parent()
         .context("Fabrickfile has no parent directory")?;
 
-    info!("Building {} v{}", fabrickfile.info.name, fabrickfile.info.version);
+    info!(
+        "Building {} v{}",
+        fabrickfile.info.name, fabrickfile.info.version
+    );
 
     // Run build command unless --no-build is specified
     if !args.no_build {
@@ -44,9 +47,10 @@ pub async fn run(args: &BuildArgs) -> Result<()> {
     let module = FabricksModule::new(fabrickfile.clone(), wasm_bytes);
 
     // Determine the tag
-    let tag = args.tag.clone().unwrap_or_else(|| {
-        format!("{}:{}", fabrickfile.info.name, fabrickfile.info.version)
-    });
+    let tag = args
+        .tag
+        .clone()
+        .unwrap_or_else(|| format!("{}:{}", fabrickfile.info.name, fabrickfile.info.version));
 
     // Store locally
     let storage = get_local_storage().await?;
@@ -112,7 +116,9 @@ fn run_build_command(fabrickfile: &Fabrickfile, workdir: &Path) -> Result<()> {
 
     // Build environment
     let mut cmd = Command::new("sh");
-    cmd.arg("-c").arg(&build.command).current_dir(&actual_workdir);
+    cmd.arg("-c")
+        .arg(&build.command)
+        .current_dir(&actual_workdir);
 
     // Add build environment variables
     if let Some(ref environment) = build.environment {
@@ -121,9 +127,7 @@ fn run_build_command(fabrickfile: &Fabrickfile, workdir: &Path) -> Result<()> {
         }
     }
 
-    let output = cmd
-        .output()
-        .context("Failed to execute build command")?;
+    let output = cmd.output().context("Failed to execute build command")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -163,10 +167,13 @@ fn read_wasm_output(fabrickfile: &Fabrickfile, workdir: &Path) -> Result<Vec<u8>
         );
     }
 
-    let wasm_bytes =
-        std::fs::read(&output_path).context("Failed to read WASM output file")?;
+    let wasm_bytes = std::fs::read(&output_path).context("Failed to read WASM output file")?;
 
-    debug!("Read {} bytes from {}", wasm_bytes.len(), output_path.display());
+    debug!(
+        "Read {} bytes from {}",
+        wasm_bytes.len(),
+        output_path.display()
+    );
     Ok(wasm_bytes)
 }
 
@@ -182,7 +189,9 @@ async fn get_local_storage() -> Result<LocalStorage> {
 /// Store a module in local storage.
 async fn store_module(storage: &LocalStorage, module: &FabricksModule, tag: &str) -> Result<()> {
     // Store config blob
-    let config_bytes = module.config_bytes().context("Failed to serialize config")?;
+    let config_bytes = module
+        .config_bytes()
+        .context("Failed to serialize config")?;
     let config_digest = storage
         .store_blob(&config_bytes)
         .await
@@ -198,8 +207,8 @@ async fn store_module(storage: &LocalStorage, module: &FabricksModule, tag: &str
 
     // Build and store manifest
     let manifest = build_local_manifest(module, &config_digest, &wasm_digest);
-    let manifest_bytes = serde_json::to_vec_pretty(&manifest)
-        .context("Failed to serialize manifest")?;
+    let manifest_bytes =
+        serde_json::to_vec_pretty(&manifest).context("Failed to serialize manifest")?;
     let manifest_digest = storage
         .store_blob(&manifest_bytes)
         .await
@@ -208,7 +217,11 @@ async fn store_module(storage: &LocalStorage, module: &FabricksModule, tag: &str
 
     // Add to index
     storage
-        .add_to_index(tag, &manifest_digest, i64::try_from(manifest_bytes.len()).unwrap_or(i64::MAX))
+        .add_to_index(
+            tag,
+            &manifest_digest,
+            i64::try_from(manifest_bytes.len()).unwrap_or(i64::MAX),
+        )
         .await
         .context("Failed to update storage index")?;
 
@@ -245,8 +258,8 @@ fn build_local_manifest(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabricks_common::models::fabrickfile::{Build, Info};
     use fabricks_common::Capabilities;
+    use fabricks_common::models::fabrickfile::{Build, Info};
     use tempfile::TempDir;
 
     fn test_fabrickfile() -> Fabrickfile {
@@ -329,7 +342,12 @@ mod tests {
         let temp = TempDir::new().expect("create temp dir");
         let result = find_fabrickfile(temp.path());
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No Fabrickfile found"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No Fabrickfile found")
+        );
     }
 
     #[test]
@@ -346,7 +364,12 @@ mod tests {
 
         let result = read_wasm_output(&fabrickfile, temp.path());
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Build output not found"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Build output not found")
+        );
     }
 
     #[test]
@@ -369,11 +392,7 @@ mod tests {
         let wasm = vec![0x00, 0x61, 0x73, 0x6d];
         let module = FabricksModule::new(fabrickfile, wasm);
 
-        let manifest = build_local_manifest(
-            &module,
-            "sha256:config123",
-            "sha256:wasm456",
-        );
+        let manifest = build_local_manifest(&module, "sha256:config123", "sha256:wasm456");
 
         assert_eq!(manifest["schemaVersion"], 2);
         assert_eq!(
@@ -393,7 +412,12 @@ mod tests {
 
         let result = run_build_command(&fabrickfile, temp.path());
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("no [build] section"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("no [build] section")
+        );
     }
 
     #[test]

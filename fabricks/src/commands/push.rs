@@ -2,9 +2,11 @@
 //!
 //! Pushes a locally built module to an OCI registry.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use fabricks_common::Fabrickfile;
-use fabricks_oci::{ClientConfig, FabricksClient, FabricksModule, LocalStorage, Reference, RegistryAuth};
+use fabricks_oci::{
+    ClientConfig, FabricksClient, FabricksModule, LocalStorage, Reference, RegistryAuth,
+};
 use tracing::{debug, info};
 
 use crate::credentials::CredentialStore;
@@ -93,19 +95,16 @@ async fn load_local_module(tag: &str) -> Result<(Fabrickfile, Vec<u8>)> {
         .await
         .context("Failed to load config")?;
 
-    let fabrickfile: Fabrickfile = toml::from_str(
-        std::str::from_utf8(&config_bytes).context("Config is not valid UTF-8")?,
-    )
-    .context("Failed to parse Fabrickfile config")?;
+    let fabrickfile: Fabrickfile =
+        toml::from_str(std::str::from_utf8(&config_bytes).context("Config is not valid UTF-8")?)
+            .context("Failed to parse Fabrickfile config")?;
 
     // Extract WASM layer digest and load WASM
     let layers = manifest["layers"]
         .as_array()
         .context("Manifest missing layers")?;
 
-    let wasm_layer = layers
-        .first()
-        .context("Manifest has no layers")?;
+    let wasm_layer = layers.first().context("Manifest has no layers")?;
 
     let wasm_digest = wasm_layer["digest"]
         .as_str()

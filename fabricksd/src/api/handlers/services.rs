@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use serde::{Deserialize, Serialize};
 
@@ -88,12 +88,7 @@ pub async fn create_service(
 
     let digest = compute_digest(&wasm_bytes);
 
-    let config = ServiceConfig::new(
-        req.name.clone(),
-        req.version,
-        req.wasm_path,
-        digest,
-    );
+    let config = ServiceConfig::new(req.name.clone(), req.version, req.wasm_path, digest);
 
     let manager = state.service_manager.write().await;
 
@@ -139,12 +134,17 @@ pub async fn run_fabrickfile(
 /// GET `/v1/services`
 ///
 /// Lists all services.
-pub async fn list_services(State(state): State<AppState>) -> Json<ApiResponse<ListServicesResponse>> {
+pub async fn list_services(
+    State(state): State<AppState>,
+) -> Json<ApiResponse<ListServicesResponse>> {
     let manager = state.service_manager.read().await;
     let services = manager.list_services().await;
     let total = services.len();
 
-    Json(ApiResponse::success(ListServicesResponse { services, total }))
+    Json(ApiResponse::success(ListServicesResponse {
+        services,
+        total,
+    }))
 }
 
 /// GET `/v1/services/:id`
@@ -236,13 +236,16 @@ fn compute_digest(bytes: &[u8]) -> String {
 /// Converts a `DaemonError` to an API error response.
 fn error_response<T: serde::Serialize>(err: &DaemonError) -> ApiResponse<T> {
     let (code, message) = match err {
-        DaemonError::ServiceNotFound { id } => ("SERVICE_NOT_FOUND", format!("Service not found: {id}")),
+        DaemonError::ServiceNotFound { id } => {
+            ("SERVICE_NOT_FOUND", format!("Service not found: {id}"))
+        }
         DaemonError::ServiceAlreadyExists { name } => {
             ("SERVICE_EXISTS", format!("Service already exists: {name}"))
         }
-        DaemonError::ServiceNotRunning { id } => {
-            ("SERVICE_NOT_RUNNING", format!("Service is not running: {id}"))
-        }
+        DaemonError::ServiceNotRunning { id } => (
+            "SERVICE_NOT_RUNNING",
+            format!("Service is not running: {id}"),
+        ),
         DaemonError::InvalidStateTransition { from, to } => (
             "INVALID_STATE",
             format!("Cannot transition from '{from}' to '{to}'"),

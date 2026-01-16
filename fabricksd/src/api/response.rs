@@ -95,8 +95,7 @@ mod tests {
 
     #[test]
     fn test_error_response_serialization() {
-        let response: ApiResponse<()> =
-            ApiResponse::error("TEST_ERROR", "Something went wrong");
+        let response: ApiResponse<()> = ApiResponse::error("TEST_ERROR", "Something went wrong");
 
         let json = serde_json::to_string(&response).expect("should serialize");
         assert!(json.contains("\"status\":\"error\""));

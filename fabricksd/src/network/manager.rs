@@ -13,7 +13,7 @@ use tracing::{debug, info, warn};
 use crate::error::{DaemonError, Result};
 use crate::store::StateStore;
 
-use super::registry::{extract_service_name, SharedServiceRegistry};
+use super::registry::{SharedServiceRegistry, extract_service_name};
 use super::types::{NetworkConfig, NetworkDetail, NetworkInfo, NetworkState};
 
 /// Network manager for network lifecycle and membership.
@@ -288,7 +288,10 @@ impl NetworkManager {
     /// Gets the networks a service belongs to.
     pub async fn get_service_networks(&self, service_id: &str) -> Vec<String> {
         let service_networks = self.service_networks.read().await;
-        service_networks.get(service_id).cloned().unwrap_or_default()
+        service_networks
+            .get(service_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Checks if two services share a network.
@@ -329,10 +332,10 @@ impl NetworkManager {
         // Check if any network allows external access
         let networks = self.networks.read().await;
         for network_id in network_ids {
-            if let Some(network) = networks.get(network_id) {
-                if !network.options.access.is_internal() {
-                    return true;
-                }
+            if let Some(network) = networks.get(network_id)
+                && !network.options.access.is_internal()
+            {
+                return true;
             }
         }
 
@@ -563,14 +566,8 @@ mod tests {
         let config2 = NetworkConfig::new("net-b".to_string());
         let id2 = manager.create_network(config2).await.unwrap();
 
-        manager
-            .add_service(&id1, "svc-1", "my-svc")
-            .await
-            .unwrap();
-        manager
-            .add_service(&id2, "svc-1", "my-svc")
-            .await
-            .unwrap();
+        manager.add_service(&id1, "svc-1", "my-svc").await.unwrap();
+        manager.add_service(&id2, "svc-1", "my-svc").await.unwrap();
 
         manager.remove_service_from_all("svc-1").await;
 

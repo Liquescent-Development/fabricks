@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use fabricks_common::{Capabilities, Fabrickfile};
 use fabricks_oci::LocalStorage;
 use fabricks_runtime::{Runtime, RuntimeConfig};
@@ -36,11 +36,7 @@ fn is_fabrickfile_reference(reference: &str) -> bool {
     let path = Path::new(reference);
 
     // Direct path to a Fabrickfile
-    if path.is_file()
-        && path
-            .file_name()
-            .is_some_and(|n| n == "Fabrickfile")
-    {
+    if path.is_file() && path.file_name().is_some_and(|n| n == "Fabrickfile") {
         return true;
     }
 
@@ -95,7 +91,10 @@ async fn run_locally(args: &RunArgs) -> Result<()> {
     // Load the module
     let (fabrickfile, wasm_bytes) = load_module(&args.module).await?;
 
-    info!("Running {} v{}", fabrickfile.info.name, fabrickfile.info.version);
+    info!(
+        "Running {} v{}",
+        fabrickfile.info.name, fabrickfile.info.version
+    );
 
     // Determine capabilities
     let capabilities = if args.no_capabilities {
@@ -127,11 +126,11 @@ async fn run_locally(args: &RunArgs) -> Result<()> {
         inherit_stdio: true,
         fuel_limit: None,
         epoch_interruption: false,
+        volume_mounts: Vec::new(),
     };
 
     // Create and run the runtime
-    let runtime = Runtime::new(&wasm_bytes, config)
-        .context("Failed to create WASM runtime")?;
+    let runtime = Runtime::new(&wasm_bytes, config).context("Failed to create WASM runtime")?;
 
     writeln_stderr(&format!("Running {}...", fabrickfile.info.name))?;
 
@@ -224,19 +223,16 @@ async fn load_from_storage(tag: &str) -> Result<(Fabrickfile, Vec<u8>)> {
         .await
         .context("Failed to load config")?;
 
-    let fabrickfile: Fabrickfile = toml::from_str(
-        std::str::from_utf8(&config_bytes).context("Config is not valid UTF-8")?,
-    )
-    .context("Failed to parse Fabrickfile config")?;
+    let fabrickfile: Fabrickfile =
+        toml::from_str(std::str::from_utf8(&config_bytes).context("Config is not valid UTF-8")?)
+            .context("Failed to parse Fabrickfile config")?;
 
     // Extract WASM layer digest and load WASM
     let layers = manifest["layers"]
         .as_array()
         .context("Manifest missing layers")?;
 
-    let wasm_layer = layers
-        .first()
-        .context("Manifest has no layers")?;
+    let wasm_layer = layers.first().context("Manifest has no layers")?;
 
     let wasm_digest = wasm_layer["digest"]
         .as_str()
@@ -330,11 +326,14 @@ mod tests {
         let extra_args = vec!["--flag".to_string(), "value".to_string()];
         let args = build_module_args("test-module", &extra_args);
 
-        assert_eq!(args, vec![
-            "test-module".to_string(),
-            "--flag".to_string(),
-            "value".to_string(),
-        ]);
+        assert_eq!(
+            args,
+            vec![
+                "test-module".to_string(),
+                "--flag".to_string(),
+                "value".to_string(),
+            ]
+        );
     }
 
     #[test]

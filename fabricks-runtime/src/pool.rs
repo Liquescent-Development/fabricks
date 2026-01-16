@@ -129,11 +129,7 @@ impl RuntimePool {
     /// # Errors
     ///
     /// Returns an error if compilation fails.
-    pub async fn get_runtime_default(
-        &self,
-        digest: &str,
-        wasm_bytes: &[u8],
-    ) -> Result<Runtime> {
+    pub async fn get_runtime_default(&self, digest: &str, wasm_bytes: &[u8]) -> Result<Runtime> {
         self.get_runtime(digest, wasm_bytes, self.default_config.clone())
             .await
     }

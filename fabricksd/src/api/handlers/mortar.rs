@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use serde::{Deserialize, Serialize};
 
@@ -81,12 +81,17 @@ pub async fn deploy_mortar(
 /// GET `/v1/mortar/projects`
 ///
 /// Lists all mortar projects.
-pub async fn list_projects(State(state): State<AppState>) -> Json<ApiResponse<ListProjectsResponse>> {
+pub async fn list_projects(
+    State(state): State<AppState>,
+) -> Json<ApiResponse<ListProjectsResponse>> {
     let manager = state.service_manager.read().await;
     let projects = manager.list_mortar_projects().await;
     let total = projects.len();
 
-    Json(ApiResponse::success(ListProjectsResponse { projects, total }))
+    Json(ApiResponse::success(ListProjectsResponse {
+        projects,
+        total,
+    }))
 }
 
 /// GET `/v1/mortar/projects/:name`

@@ -20,7 +20,7 @@ use tracing::{debug, error, info, warn};
 use fabricks_common::models::capability::Capabilities;
 
 use crate::error::{DaemonError, Result};
-use crate::network::{validate_connection, ConnectionDecision, NetworkManager};
+use crate::network::{ConnectionDecision, NetworkManager, validate_connection};
 
 /// Request to be executed by the egress proxy.
 #[derive(Debug, Clone)]
@@ -359,7 +359,8 @@ impl EgressProxy {
                     to = %service_id,
                     "Allowing internal TCP connection"
                 );
-                self.establish_tcp_connection(&request.host, request.port).await
+                self.establish_tcp_connection(&request.host, request.port)
+                    .await
             }
             ConnectionDecision::AllowExternal => {
                 debug!(
@@ -367,7 +368,8 @@ impl EgressProxy {
                     target = %request.target(),
                     "Allowing external TCP connection"
                 );
-                self.establish_tcp_connection(&request.host, request.port).await
+                self.establish_tcp_connection(&request.host, request.port)
+                    .await
             }
             ConnectionDecision::DenyCapability { reason } => {
                 warn!(
@@ -406,14 +408,13 @@ impl EgressProxy {
         // Resolve the address
         let addr: SocketAddr = match tokio::net::lookup_host(&target).await {
             Ok(mut addrs) => {
-                match addrs.next() {
-                    Some(addr) => addr,
-                    None => {
-                        warn!(target = %target, "DNS lookup returned no addresses");
-                        return TcpConnectResult::Failed {
-                            error: format!("DNS lookup returned no addresses for {target}"),
-                        };
-                    }
+                if let Some(addr) = addrs.next() {
+                    addr
+                } else {
+                    warn!(target = %target, "DNS lookup returned no addresses");
+                    return TcpConnectResult::Failed {
+                        error: format!("DNS lookup returned no addresses for {target}"),
+                    };
                 }
             }
             Err(e) => {
@@ -544,7 +545,10 @@ impl EgressProxy {
 impl std::fmt::Debug for EgressProxy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EgressProxy")
-            .field("has_internal_handler", &self.internal_route_handler.is_some())
+            .field(
+                "has_internal_handler",
+                &self.internal_route_handler.is_some(),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -555,8 +559,8 @@ pub type SharedEgressProxy = Arc<EgressProxy>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::ServiceRegistry;
     use crate::network::NetworkConfig;
+    use crate::network::ServiceRegistry;
     use crate::store::StateStore;
     use fabricks_common::models::capability::NetworkCapabilities;
     use tempfile::tempdir;
@@ -584,7 +588,10 @@ mod tests {
 
     #[test]
     fn test_egress_request_host_port() {
-        let req = EgressRequest::new("GET".to_string(), "https://api.example.com:443/v1".to_string());
+        let req = EgressRequest::new(
+            "GET".to_string(),
+            "https://api.example.com:443/v1".to_string(),
+        );
         let (host, port) = req.host_port().unwrap();
         assert_eq!(host, "api.example.com");
         assert_eq!(port, 443);
@@ -642,10 +649,8 @@ mod tests {
         let manager = create_test_network_manager();
         let proxy = EgressProxy::new(manager).unwrap();
 
-        let request = EgressRequest::new(
-            "GET".to_string(),
-            "https://api.example.com/v1".to_string(),
-        );
+        let request =
+            EgressRequest::new("GET".to_string(), "https://api.example.com/v1".to_string());
 
         let response = proxy.execute("svc-1", &None, request).await;
 
@@ -659,10 +664,8 @@ mod tests {
         let proxy = EgressProxy::new(manager).unwrap();
 
         let caps = capabilities_for_connect(vec!["other.example.com:443"]);
-        let request = EgressRequest::new(
-            "GET".to_string(),
-            "https://api.example.com/v1".to_string(),
-        );
+        let request =
+            EgressRequest::new("GET".to_string(), "https://api.example.com/v1".to_string());
 
         let response = proxy.execute("svc-1", &caps, request).await;
 
@@ -688,10 +691,8 @@ mod tests {
         let proxy = EgressProxy::new(manager).unwrap();
         let caps = capabilities_for_connect(vec!["service-b:8080"]);
 
-        let request = EgressRequest::new(
-            "GET".to_string(),
-            "http://service-b:8080/api".to_string(),
-        );
+        let request =
+            EgressRequest::new("GET".to_string(), "http://service-b:8080/api".to_string());
 
         let response = proxy.execute("svc-a", &caps, request).await;
 
@@ -727,10 +728,8 @@ mod tests {
         proxy.set_internal_route_handler(handler);
 
         let caps = capabilities_for_connect(vec!["service-b:8080"]);
-        let request = EgressRequest::new(
-            "GET".to_string(),
-            "http://service-b:8080/api".to_string(),
-        );
+        let request =
+            EgressRequest::new("GET".to_string(), "http://service-b:8080/api".to_string());
 
         let response = proxy.execute("svc-a", &caps, request).await;
 
@@ -797,9 +796,12 @@ mod tests {
         let proxy = EgressProxy::new(manager).expect("create proxy");
 
         // Grant the capability
-        let caps = capabilities_for_connect(vec!["unreachable-host-that-does-not-exist.local:1234"]);
-        let request =
-            TcpConnectRequest::new("unreachable-host-that-does-not-exist.local".to_string(), 1234);
+        let caps =
+            capabilities_for_connect(vec!["unreachable-host-that-does-not-exist.local:1234"]);
+        let request = TcpConnectRequest::new(
+            "unreachable-host-that-does-not-exist.local".to_string(),
+            1234,
+        );
         let result = proxy.connect_tcp("svc-1", &caps, request).await;
 
         // Should fail because the host doesn't exist

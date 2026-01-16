@@ -94,9 +94,7 @@ pub async fn validate_connection(
 
     if !check_capability_allows(capabilities.as_ref(), &target_with_port) {
         return ConnectionDecision::DenyCapability {
-            reason: format!(
-                "Service does not have capability to connect to '{target_with_port}'"
-            ),
+            reason: format!("Service does not have capability to connect to '{target_with_port}'"),
         };
     }
 
@@ -216,8 +214,8 @@ pub async fn validate_ingress(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::registry::ServiceRegistry;
     use crate::network::NetworkConfig;
+    use crate::network::registry::ServiceRegistry;
     use crate::store::StateStore;
     use fabricks_common::models::capability::NetworkCapabilities;
     use std::sync::Arc;
@@ -274,10 +272,12 @@ mod tests {
     async fn test_deny_no_capability() {
         let manager = create_test_network_manager();
 
-        let decision =
-            validate_connection("svc-1", &None, "api.example.com", 443, &manager).await;
+        let decision = validate_connection("svc-1", &None, "api.example.com", 443, &manager).await;
 
-        assert!(matches!(decision, ConnectionDecision::DenyCapability { .. }));
+        assert!(matches!(
+            decision,
+            ConnectionDecision::DenyCapability { .. }
+        ));
         assert!(!decision.is_allowed());
     }
 
@@ -286,10 +286,12 @@ mod tests {
         let manager = create_test_network_manager();
         let cap = capabilities_for_connect(vec!["other.example.com:443"]);
 
-        let decision =
-            validate_connection("svc-1", &cap, "api.example.com", 443, &manager).await;
+        let decision = validate_connection("svc-1", &cap, "api.example.com", 443, &manager).await;
 
-        assert!(matches!(decision, ConnectionDecision::DenyCapability { .. }));
+        assert!(matches!(
+            decision,
+            ConnectionDecision::DenyCapability { .. }
+        ));
     }
 
     #[tokio::test]
@@ -297,8 +299,7 @@ mod tests {
         let manager = create_test_network_manager();
         let cap = capabilities_for_connect(vec!["api.example.com:443"]);
 
-        let decision =
-            validate_connection("svc-1", &cap, "api.example.com", 443, &manager).await;
+        let decision = validate_connection("svc-1", &cap, "api.example.com", 443, &manager).await;
 
         assert_eq!(decision, ConnectionDecision::AllowExternal);
         assert!(decision.is_allowed());
@@ -309,8 +310,7 @@ mod tests {
         let manager = create_test_network_manager();
         let cap = capabilities_allow_all_outbound();
 
-        let decision =
-            validate_connection("svc-1", &cap, "any.host.com", 8080, &manager).await;
+        let decision = validate_connection("svc-1", &cap, "any.host.com", 8080, &manager).await;
 
         assert_eq!(decision, ConnectionDecision::AllowExternal);
     }
@@ -338,8 +338,7 @@ mod tests {
 
         let cap = capabilities_for_connect(vec!["service-b:8080"]);
 
-        let decision =
-            validate_connection("svc-a", &cap, "service-b", 8080, &manager).await;
+        let decision = validate_connection("svc-a", &cap, "service-b", 8080, &manager).await;
 
         assert!(matches!(decision, ConnectionDecision::DenyNetwork { .. }));
     }
@@ -364,8 +363,7 @@ mod tests {
 
         let cap = capabilities_for_connect(vec!["service-b:8080"]);
 
-        let decision =
-            validate_connection("svc-a", &cap, "service-b", 8080, &manager).await;
+        let decision = validate_connection("svc-a", &cap, "service-b", 8080, &manager).await;
 
         match decision {
             ConnectionDecision::AllowInternal { service_id } => {

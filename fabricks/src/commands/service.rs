@@ -4,8 +4,8 @@ use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
-use fabricks_common::{parse_fabrickfile, Fabrickfile};
+use anyhow::{Context, Result, bail};
+use fabricks_common::{Fabrickfile, parse_fabrickfile};
 use fabricks_oci::{FabricksModule, LocalStorage};
 use tempfile::NamedTempFile;
 use tracing::{debug, info};
@@ -140,7 +140,9 @@ fn build_module(fabrickfile: &Fabrickfile, workdir: &Path) -> Result<Vec<u8>> {
 
     // Build environment
     let mut cmd = Command::new("sh");
-    cmd.arg("-c").arg(&build.command).current_dir(&actual_workdir);
+    cmd.arg("-c")
+        .arg(&build.command)
+        .current_dir(&actual_workdir);
 
     // Add build environment variables
     if let Some(ref environment) = build.environment {
@@ -149,9 +151,7 @@ fn build_module(fabrickfile: &Fabrickfile, workdir: &Path) -> Result<Vec<u8>> {
         }
     }
 
-    let output = cmd
-        .output()
-        .context("Failed to execute build command")?;
+    let output = cmd.output().context("Failed to execute build command")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -176,10 +176,13 @@ fn build_module(fabrickfile: &Fabrickfile, workdir: &Path) -> Result<Vec<u8>> {
         );
     }
 
-    let wasm_bytes =
-        std::fs::read(&output_path).context("Failed to read WASM output file")?;
+    let wasm_bytes = std::fs::read(&output_path).context("Failed to read WASM output file")?;
 
-    debug!("Read {} bytes from {}", wasm_bytes.len(), output_path.display());
+    debug!(
+        "Read {} bytes from {}",
+        wasm_bytes.len(),
+        output_path.display()
+    );
     Ok(wasm_bytes)
 }
 
@@ -197,7 +200,9 @@ async fn store_module(module: &FabricksModule, tag: &str) -> Result<()> {
     let storage = get_or_create_local_storage().await?;
 
     // Store config blob
-    let config_bytes = module.config_bytes().context("Failed to serialize config")?;
+    let config_bytes = module
+        .config_bytes()
+        .context("Failed to serialize config")?;
     let config_digest = storage
         .store_blob(&config_bytes)
         .await
@@ -213,8 +218,8 @@ async fn store_module(module: &FabricksModule, tag: &str) -> Result<()> {
 
     // Build and store manifest
     let manifest = build_manifest(module, &config_digest, &wasm_digest);
-    let manifest_bytes = serde_json::to_vec_pretty(&manifest)
-        .context("Failed to serialize manifest")?;
+    let manifest_bytes =
+        serde_json::to_vec_pretty(&manifest).context("Failed to serialize manifest")?;
     let manifest_digest = storage
         .store_blob(&manifest_bytes)
         .await
@@ -223,7 +228,11 @@ async fn store_module(module: &FabricksModule, tag: &str) -> Result<()> {
 
     // Add to index
     storage
-        .add_to_index(tag, &manifest_digest, i64::try_from(manifest_bytes.len()).unwrap_or(i64::MAX))
+        .add_to_index(
+            tag,
+            &manifest_digest,
+            i64::try_from(manifest_bytes.len()).unwrap_or(i64::MAX),
+        )
         .await
         .context("Failed to update storage index")?;
 
@@ -283,8 +292,7 @@ async fn resolve_from_storage(reference: &str) -> Result<ModuleSource> {
         .get_blob(config_digest)
         .await
         .context("Failed to load config blob")?;
-    let config_toml =
-        String::from_utf8(config_bytes).context("Config blob is not valid UTF-8")?;
+    let config_toml = String::from_utf8(config_bytes).context("Config blob is not valid UTF-8")?;
     let fabrickfile: Fabrickfile =
         toml::from_str(&config_toml).context("Failed to parse Fabrickfile from storage")?;
 
@@ -379,7 +387,8 @@ fn write_temp_wasm(wasm_bytes: &[u8]) -> Result<NamedTempFile> {
 /// Write Fabrickfile to a temporary file.
 fn write_temp_fabrickfile(fabrickfile: &Fabrickfile) -> Result<NamedTempFile> {
     let mut temp = NamedTempFile::with_suffix(".toml").context("Failed to create temp file")?;
-    let toml_content = toml::to_string_pretty(fabrickfile).context("Failed to serialize Fabrickfile")?;
+    let toml_content =
+        toml::to_string_pretty(fabrickfile).context("Failed to serialize Fabrickfile")?;
     temp.write_all(toml_content.as_bytes())
         .context("Failed to write Fabrickfile to temp file")?;
     temp.flush().context("Failed to flush temp file")?;
@@ -428,10 +437,7 @@ async fn inspect_service(client: &DaemonClient, id: &str, format: OutputFormat) 
                 output::writeln("")?;
                 output::writeln("Instances:")?;
                 for instance in &detail.instances {
-                    let started = instance
-                        .started_at
-                        .as_deref()
-                        .unwrap_or("N/A");
+                    let started = instance.started_at.as_deref().unwrap_or("N/A");
                     output::writeln(&format!(
                         "  - {} ({}) started: {}",
                         instance.id, instance.state, started

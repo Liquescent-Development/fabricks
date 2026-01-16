@@ -25,6 +25,7 @@ toml.workspace = true
 thiserror.workspace = true
 semver.workspace = true
 url.workspace = true
+regex.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

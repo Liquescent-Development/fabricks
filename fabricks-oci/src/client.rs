@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use oci_client::client::{ClientConfig as OciClientConfig, ImageLayer};
 use oci_client::errors::OciErrorCode;
-use oci_client::manifest::{OciDescriptor, OciImageManifest, OCI_IMAGE_MEDIA_TYPE};
+use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciDescriptor, OciImageManifest};
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference, RegistryOperation};
 use tracing::{debug, info};
@@ -117,7 +117,9 @@ impl FabricksClient {
         for layer in &layers {
             let digest = compute_digest(&layer.data);
             debug!("Pushing layer: {digest}");
-            self.client.push_blob(reference, &layer.data, &digest).await?;
+            self.client
+                .push_blob(reference, &layer.data, &digest)
+                .await?;
         }
 
         // Push manifest
@@ -191,10 +193,7 @@ impl FabricksClient {
 
         let module = FabricksModule::new(config, wasm_bytes);
 
-        Ok(PulledModule {
-            module,
-            digest,
-        })
+        Ok(PulledModule { module, digest })
     }
 
     /// Check if a module exists in the registry.
@@ -212,8 +211,7 @@ impl FabricksClient {
             Ok(_) => Ok(true),
             Err(oci_client::errors::OciDistributionError::RegistryError { envelope, .. })
                 if envelope.errors.iter().any(|e| {
-                    e.code == OciErrorCode::ManifestUnknown
-                        || e.code == OciErrorCode::NameUnknown
+                    e.code == OciErrorCode::ManifestUnknown || e.code == OciErrorCode::NameUnknown
                 }) =>
             {
                 Ok(false)
@@ -297,9 +295,12 @@ fn parse_config(
     }
 
     // Fall back to building minimal config from annotations
-    let annotations = manifest.annotations.as_ref().ok_or_else(|| OciError::InvalidModule {
-        reason: "no config or annotations found".to_string(),
-    })?;
+    let annotations = manifest
+        .annotations
+        .as_ref()
+        .ok_or_else(|| OciError::InvalidModule {
+            reason: "no config or annotations found".to_string(),
+        })?;
 
     let name = annotations
         .get(media_types::ANNOTATION_NAME)
@@ -324,7 +325,9 @@ fn parse_config(
             name,
             version,
             service_type: fabricks_common::models::fabrickfile::ServiceType::default(),
-            description: annotations.get(media_types::ANNOTATION_DESCRIPTION).cloned(),
+            description: annotations
+                .get(media_types::ANNOTATION_DESCRIPTION)
+                .cloned(),
             authors: annotations
                 .get(media_types::ANNOTATION_AUTHORS)
                 .map(|a| a.split(", ").map(String::from).collect()),

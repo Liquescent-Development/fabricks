@@ -48,9 +48,10 @@ pub async fn run(args: &PullArgs) -> Result<()> {
         .context("Failed to pull module from registry")?;
 
     // Determine the local tag
-    let local_tag = args.tag.clone().unwrap_or_else(|| {
-        format!("{}:{}", pulled.module.name(), pulled.module.version())
-    });
+    let local_tag = args
+        .tag
+        .clone()
+        .unwrap_or_else(|| format!("{}:{}", pulled.module.name(), pulled.module.version()));
 
     // Store locally
     let storage = get_local_storage().await?;
@@ -92,7 +93,9 @@ async fn store_module(
     tag: &str,
 ) -> Result<()> {
     // Store config blob
-    let config_bytes = module.config_bytes().context("Failed to serialize config")?;
+    let config_bytes = module
+        .config_bytes()
+        .context("Failed to serialize config")?;
     let config_digest = storage
         .store_blob(&config_bytes)
         .await
@@ -108,8 +111,8 @@ async fn store_module(
 
     // Build and store manifest
     let manifest = build_local_manifest(module, &config_digest, &wasm_digest);
-    let manifest_bytes = serde_json::to_vec_pretty(&manifest)
-        .context("Failed to serialize manifest")?;
+    let manifest_bytes =
+        serde_json::to_vec_pretty(&manifest).context("Failed to serialize manifest")?;
     let manifest_digest = storage
         .store_blob(&manifest_bytes)
         .await
@@ -118,7 +121,11 @@ async fn store_module(
 
     // Add to index
     storage
-        .add_to_index(tag, &manifest_digest, i64::try_from(manifest_bytes.len()).unwrap_or(i64::MAX))
+        .add_to_index(
+            tag,
+            &manifest_digest,
+            i64::try_from(manifest_bytes.len()).unwrap_or(i64::MAX),
+        )
         .await
         .context("Failed to update storage index")?;
 
