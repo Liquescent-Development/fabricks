@@ -94,9 +94,12 @@ mod tests {
 
     #[test]
     fn test_event_creation() {
-        let event = Event::new(EventType::DaemonStarted, serde_json::json!({
-            "version": "1.0.0"
-        }));
+        let event = Event::new(
+            EventType::DaemonStarted,
+            serde_json::json!({
+                "version": "1.0.0"
+            }),
+        );
 
         assert_eq!(event.event_type, EventType::DaemonStarted);
         assert!(!event.id.is_nil());
@@ -113,9 +116,12 @@ mod tests {
 
     #[test]
     fn test_event_serialization() {
-        let event = Event::new(EventType::ServiceCreated, serde_json::json!({
-            "service_id": "test-service"
-        }));
+        let event = Event::new(
+            EventType::ServiceCreated,
+            serde_json::json!({
+                "service_id": "test-service"
+            }),
+        );
 
         let json = serde_json::to_string(&event).expect("should serialize");
         let parsed: Event = serde_json::from_str(&json).expect("should parse");

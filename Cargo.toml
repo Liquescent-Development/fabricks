@@ -92,6 +92,7 @@ hex = "0.4"
 futures = "0.3"
 bytes = "1.9"
 petgraph = "0.7"
+regex = "1.11"
 
 # Password input
 rpassword = "7.3"

@@ -16,6 +16,7 @@ use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
+use fabricks_common::VariableResolver;
 use fabricks_common::models::fabrickfile::Fabrickfile;
 use fabricks_common::models::mortar::MortarFile;
 use fabricks_runtime::{RuntimePool, RuntimePoolBuilder};
@@ -26,9 +27,10 @@ use crate::network::{
     NetworkAccess, NetworkAudit, NetworkConfig, NetworkEncryption, NetworkIsolation,
     NetworkOptions, SharedNetworkManager,
 };
-use fabricks_common::models::mortar::EncryptionRequirement;
 use crate::proxy::SharedProxyServer;
 use crate::store::StateStore;
+use crate::volume::{SharedVolumeManager, VolumeMount};
+use fabricks_common::models::mortar::EncryptionRequirement;
 
 use super::dependency::{resolve_shutdown_order, resolve_startup_order, validate_dependencies};
 use super::handle::ServiceHandle;
@@ -57,6 +59,9 @@ pub struct ServiceManager {
     /// Network manager for network isolation.
     network_manager: Option<SharedNetworkManager>,
 
+    /// Volume manager for persistent storage.
+    volume_manager: Option<SharedVolumeManager>,
+
     /// Mortar project tracking (`project_name` -> `service_ids`).
     mortar_projects: RwLock<HashMap<String, Vec<String>>>,
 }
@@ -71,6 +76,7 @@ impl ServiceManager {
     /// * `max_cached_modules` - Maximum number of WASM modules to cache
     /// * `proxy_server` - Optional proxy server for HTTP/TCP port bindings
     /// * `network_manager` - Optional network manager for network isolation
+    /// * `volume_manager` - Optional volume manager for persistent storage
     ///
     /// # Errors
     ///
@@ -81,6 +87,7 @@ impl ServiceManager {
         max_cached_modules: usize,
         proxy_server: Option<SharedProxyServer>,
         network_manager: Option<SharedNetworkManager>,
+        volume_manager: Option<SharedVolumeManager>,
     ) -> Result<Self> {
         let runtime_pool = RuntimePoolBuilder::new()
             .max_modules(max_cached_modules)
@@ -94,6 +101,7 @@ impl ServiceManager {
             event_bus,
             proxy_server,
             network_manager,
+            volume_manager,
             mortar_projects: RwLock::new(HashMap::new()),
         })
     }
@@ -212,9 +220,7 @@ impl ServiceManager {
             path.to_path_buf()
         } else if let Some(ref build) = fabrickfile.build {
             // Resolve relative to Fabrickfile directory
-            let base_dir = fabrickfile_path
-                .parent()
-                .unwrap_or_else(|| Path::new("."));
+            let base_dir = fabrickfile_path.parent().unwrap_or_else(|| Path::new("."));
             base_dir.join(&build.output)
         } else {
             return Err(DaemonError::FabrickfileParseError(
@@ -223,11 +229,12 @@ impl ServiceManager {
         };
 
         // Compute digest
-        let wasm_bytes = tokio::fs::read(&wasm_path).await.map_err(|_| {
-            DaemonError::WasmModuleNotFound {
-                path: wasm_path.display().to_string(),
-            }
-        })?;
+        let wasm_bytes =
+            tokio::fs::read(&wasm_path)
+                .await
+                .map_err(|_| DaemonError::WasmModuleNotFound {
+                    path: wasm_path.display().to_string(),
+                })?;
         let digest = compute_digest(&wasm_bytes);
 
         // Build config from Fabrickfile
@@ -244,11 +251,15 @@ impl ServiceManager {
                 .and_then(|c| c.environment.clone())
                 .unwrap_or_default(),
             args: Vec::new(),
-            resources: fabrickfile.config.as_ref().and_then(|c| c.resources.clone()),
+            resources: fabrickfile
+                .config
+                .as_ref()
+                .and_then(|c| c.resources.clone()),
             replicas: fabricks_common::models::Replicas::default(),
             health_check: fabrickfile.health_check.clone(),
             depends_on: Vec::new(),
             networks: Vec::new(),
+            volumes: Vec::new(),
             mortar_project: None,
         };
 
@@ -604,6 +615,89 @@ impl ServiceManager {
         Ok(())
     }
 
+    /// Creates volumes defined in a mortar file.
+    ///
+    /// Returns a map of `volume_name` → (`volume_id`, `host_path`) for building service mounts.
+    /// Volumes that already exist are reused (idempotent).
+    async fn create_mortar_volumes(
+        &self,
+        mortar: &MortarFile,
+    ) -> Result<HashMap<String, (String, std::path::PathBuf)>> {
+        let mut volume_lookup: HashMap<String, (String, std::path::PathBuf)> = HashMap::new();
+
+        let Some(volume_manager) = &self.volume_manager else {
+            // No volume manager, return empty lookup (services with volumes will fail validation)
+            return Ok(volume_lookup);
+        };
+
+        let Some(volumes) = &mortar.volume else {
+            return Ok(volume_lookup);
+        };
+
+        for (volume_name, volume) in volumes {
+            // Ensure volume exists (creates if needed)
+            let size_str = volume.size.to_string();
+            let volume_id = volume_manager
+                .ensure_volume(volume_name, Some(size_str))
+                .await?;
+
+            // Get the volume details to retrieve the host path
+            let detail = volume_manager.get_volume(&volume_id).await.ok_or_else(|| {
+                DaemonError::VolumeNotFound {
+                    id: volume_id.clone(),
+                }
+            })?;
+
+            info!(
+                volume = %volume_name,
+                volume_id = %volume_id,
+                path = ?detail.path,
+                "Ensured volume exists"
+            );
+
+            volume_lookup.insert(volume_name.clone(), (volume_id, detail.path));
+        }
+
+        Ok(volume_lookup)
+    }
+
+    /// Builds volume mounts for a service from its volume configuration.
+    fn build_service_volume_mounts(
+        service: &fabricks_common::models::mortar::Service,
+        volume_lookup: &HashMap<String, (String, std::path::PathBuf)>,
+    ) -> Result<Vec<VolumeMount>> {
+        let Some(service_volumes) = &service.volumes else {
+            return Ok(Vec::new());
+        };
+
+        let mut mounts = Vec::new();
+
+        for (volume_name, guest_path) in service_volumes {
+            let (volume_id, host_path) =
+                volume_lookup
+                    .get(volume_name)
+                    .ok_or_else(|| DaemonError::VolumeNotFound {
+                        id: volume_name.clone(),
+                    })?;
+
+            mounts.push(VolumeMount::new(
+                volume_id.clone(),
+                volume_name.clone(),
+                host_path.clone(),
+                guest_path.clone(),
+            ));
+
+            debug!(
+                volume = %volume_name,
+                guest_path = %guest_path,
+                host_path = ?host_path,
+                "Added volume mount"
+            );
+        }
+
+        Ok(mounts)
+    }
+
     /// Joins a service to its specified networks.
     async fn join_service_to_networks(
         &self,
@@ -660,8 +754,14 @@ impl ServiceManager {
 
         info!(project = %project_name, "Deploying mortar project");
 
+        // Create variable resolver for environment variable substitution
+        let resolver = VariableResolver::from_mortar(&mortar);
+
         // Create networks from mortar definition
         self.create_mortar_networks(&mortar).await?;
+
+        // Create/ensure volumes from mortar definition and build lookup map
+        let volume_mounts_by_name = self.create_mortar_volumes(&mortar).await?;
 
         // Build service configs
         let mut configs: Vec<ServiceConfig> = Vec::new();
@@ -671,27 +771,41 @@ impl ServiceManager {
             let wasm_path = resolve_wasm_path_for_service(service_name, service, base_dir).await?;
 
             // Load WASM and compute digest
-            let wasm_bytes = tokio::fs::read(&wasm_path).await.map_err(|_| {
-                DaemonError::WasmModuleNotFound {
-                    path: wasm_path.display().to_string(),
-                }
-            })?;
+            let wasm_bytes =
+                tokio::fs::read(&wasm_path)
+                    .await
+                    .map_err(|_| DaemonError::WasmModuleNotFound {
+                        path: wasm_path.display().to_string(),
+                    })?;
             let digest = compute_digest(&wasm_bytes);
+
+            // Resolve variables in environment
+            let raw_environment = service.environment.clone().unwrap_or_default();
+            let environment = resolver
+                .resolve_environment(&raw_environment)
+                .map_err(|e| DaemonError::FabrickfileParseError(e.to_string()))?;
+
+            // Build volume mounts for this service
+            let volumes = Self::build_service_volume_mounts(service, &volume_mounts_by_name)?;
 
             let config = ServiceConfig {
                 name: service.name.clone().unwrap_or_else(|| service_name.clone()),
-                version: service.version.clone().unwrap_or_else(|| "latest".to_string()),
+                version: service
+                    .version
+                    .clone()
+                    .unwrap_or_else(|| "latest".to_string()),
                 service_type: service.service_type.unwrap_or_default(),
                 wasm_path,
                 wasm_digest: digest,
                 capabilities: fabricks_common::Capabilities::default(),
-                environment: service.environment.clone().unwrap_or_default(),
+                environment,
                 args: Vec::new(),
                 resources: service.resources.clone(),
                 replicas: service.replicas.clone().unwrap_or_default(),
                 health_check: service.health_check.clone(),
                 depends_on: service.depends_on.clone().unwrap_or_default(),
                 networks: service.networks.clone(),
+                volumes,
                 mortar_project: Some(project_name.clone()),
             };
 
@@ -766,12 +880,11 @@ impl ServiceManager {
     pub async fn teardown_mortar(&self, project_name: &str) -> Result<()> {
         let service_ids = {
             let projects = self.mortar_projects.read().await;
-            projects
-                .get(project_name)
-                .cloned()
-                .ok_or_else(|| DaemonError::MortarProjectNotFound {
+            projects.get(project_name).cloned().ok_or_else(|| {
+                DaemonError::MortarProjectNotFound {
                     name: project_name.to_string(),
-                })?
+                }
+            })?
         };
 
         info!(project = %project_name, services = service_ids.len(), "Tearing down mortar project");
@@ -831,12 +944,11 @@ impl ServiceManager {
     pub async fn list_mortar_services(&self, project_name: &str) -> Result<Vec<ServiceInfo>> {
         let service_ids = {
             let projects = self.mortar_projects.read().await;
-            projects
-                .get(project_name)
-                .cloned()
-                .ok_or_else(|| DaemonError::MortarProjectNotFound {
+            projects.get(project_name).cloned().ok_or_else(|| {
+                DaemonError::MortarProjectNotFound {
                     name: project_name.to_string(),
-                })?
+                }
+            })?
         };
 
         let mut infos = Vec::with_capacity(service_ids.len());
@@ -910,7 +1022,10 @@ impl ServiceManager {
             // Track in mortar project if applicable
             if let Some(ref project) = state.mortar_project {
                 let mut projects = self.mortar_projects.write().await;
-                projects.entry(project.clone()).or_default().push(id.clone());
+                projects
+                    .entry(project.clone())
+                    .or_default()
+                    .push(id.clone());
             }
 
             // Store handle
@@ -987,8 +1102,8 @@ mod tests {
         let store = Arc::new(StateStore::new(Arc::new(db)));
         let event_bus = Arc::new(EventBus::new(100, 1000));
 
-        let manager =
-            ServiceManager::new(store, event_bus, 10, None, None).expect("should create manager");
+        let manager = ServiceManager::new(store, event_bus, 10, None, None, None)
+            .expect("should create manager");
         (manager, dir)
     }
 

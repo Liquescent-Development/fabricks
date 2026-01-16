@@ -56,10 +56,12 @@ pub fn resolve_startup_order(services: &[ServiceConfig]) -> Result<Vec<String>> 
         let dependent_node = nodes[&service.name];
 
         for dep_name in &service.depends_on {
-            let dep_node = nodes.get(dep_name).ok_or_else(|| DaemonError::DependencyNotFound {
-                service: service.name.clone(),
-                dependency: dep_name.clone(),
-            })?;
+            let dep_node = nodes
+                .get(dep_name)
+                .ok_or_else(|| DaemonError::DependencyNotFound {
+                    service: service.name.clone(),
+                    dependency: dep_name.clone(),
+                })?;
 
             // Edge from dependency to dependent
             graph.add_edge(*dep_node, dependent_node, ());
@@ -95,8 +97,7 @@ pub fn resolve_shutdown_order(services: &[ServiceConfig]) -> Result<Vec<String>>
 ///
 /// Returns an error if any service references a non-existent dependency.
 pub fn validate_dependencies(services: &[ServiceConfig]) -> Result<()> {
-    let names: std::collections::HashSet<&str> =
-        services.iter().map(|s| s.name.as_str()).collect();
+    let names: std::collections::HashSet<&str> = services.iter().map(|s| s.name.as_str()).collect();
 
     for service in services {
         for dep in &service.depends_on {
@@ -153,6 +154,7 @@ mod tests {
             health_check: None,
             depends_on: depends_on.into_iter().map(String::from).collect(),
             networks: Vec::new(),
+            volumes: Vec::new(),
             mortar_project: None,
         }
     }
@@ -173,16 +175,19 @@ mod tests {
 
     #[test]
     fn test_simple_dependency() {
-        let services = vec![
-            make_config("api", vec!["db"]),
-            make_config("db", vec![]),
-        ];
+        let services = vec![make_config("api", vec!["db"]), make_config("db", vec![])];
 
         let order = resolve_startup_order(&services).expect("should resolve");
 
         // db must come before api
-        let db_pos = order.iter().position(|n| n == "db").expect("db should exist");
-        let api_pos = order.iter().position(|n| n == "api").expect("api should exist");
+        let db_pos = order
+            .iter()
+            .position(|n| n == "db")
+            .expect("db should exist");
+        let api_pos = order
+            .iter()
+            .position(|n| n == "api")
+            .expect("api should exist");
         assert!(db_pos < api_pos, "db should start before api");
     }
 
@@ -196,9 +201,18 @@ mod tests {
 
         let order = resolve_startup_order(&services).expect("should resolve");
 
-        let db_pos = order.iter().position(|n| n == "db").expect("db should exist");
-        let api_pos = order.iter().position(|n| n == "api").expect("api should exist");
-        let fe_pos = order.iter().position(|n| n == "frontend").expect("frontend should exist");
+        let db_pos = order
+            .iter()
+            .position(|n| n == "db")
+            .expect("db should exist");
+        let api_pos = order
+            .iter()
+            .position(|n| n == "api")
+            .expect("api should exist");
+        let fe_pos = order
+            .iter()
+            .position(|n| n == "frontend")
+            .expect("frontend should exist");
 
         assert!(db_pos < api_pos, "db should start before api");
         assert!(api_pos < fe_pos, "api should start before frontend");
@@ -214,9 +228,18 @@ mod tests {
 
         let order = resolve_startup_order(&services).expect("should resolve");
 
-        let db_pos = order.iter().position(|n| n == "db").expect("db should exist");
-        let cache_pos = order.iter().position(|n| n == "cache").expect("cache should exist");
-        let api_pos = order.iter().position(|n| n == "api").expect("api should exist");
+        let db_pos = order
+            .iter()
+            .position(|n| n == "db")
+            .expect("db should exist");
+        let cache_pos = order
+            .iter()
+            .position(|n| n == "cache")
+            .expect("cache should exist");
+        let api_pos = order
+            .iter()
+            .position(|n| n == "api")
+            .expect("api should exist");
 
         assert!(db_pos < api_pos, "db should start before api");
         assert!(cache_pos < api_pos, "cache should start before api");
@@ -256,10 +279,7 @@ mod tests {
 
     #[test]
     fn test_shutdown_order() {
-        let services = vec![
-            make_config("api", vec!["db"]),
-            make_config("db", vec![]),
-        ];
+        let services = vec![make_config("api", vec!["db"]), make_config("db", vec![])];
 
         let startup = resolve_startup_order(&services).expect("should resolve");
         let shutdown = resolve_shutdown_order(&services).expect("should resolve");
@@ -272,10 +292,7 @@ mod tests {
 
     #[test]
     fn test_validate_dependencies_ok() {
-        let services = vec![
-            make_config("api", vec!["db"]),
-            make_config("db", vec![]),
-        ];
+        let services = vec![make_config("api", vec!["db"]), make_config("db", vec![])];
 
         assert!(validate_dependencies(&services).is_ok());
     }

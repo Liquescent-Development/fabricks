@@ -239,7 +239,10 @@ mod tests {
         let binding = router.lookup(8080).await;
         assert!(binding.is_some());
         assert_eq!(binding.as_ref().expect("has binding").service_id, "svc-123");
-        assert_eq!(binding.as_ref().expect("has binding").service_name, "my-service");
+        assert_eq!(
+            binding.as_ref().expect("has binding").service_name,
+            "my-service"
+        );
         assert_eq!(binding.expect("has binding").port, 8080);
     }
 
@@ -252,7 +255,9 @@ mod tests {
             .await
             .expect("should bind");
 
-        let result = router.bind(8080, "svc-456".to_string(), "other-service".to_string()).await;
+        let result = router
+            .bind(8080, "svc-456".to_string(), "other-service".to_string())
+            .await;
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),

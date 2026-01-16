@@ -114,7 +114,6 @@ impl CredentialStore {
 
         Ok(username_removed || password_removed)
     }
-
 }
 
 #[cfg(test)]

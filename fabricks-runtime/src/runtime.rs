@@ -3,7 +3,7 @@
 //! This module provides the core runtime for executing WASM components with
 //! Fabricks' deny-by-default security model using WASI Preview 2.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fabricks_common::Capabilities;
@@ -13,6 +13,41 @@ use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiView};
 
 use crate::error::{Result, RuntimeError};
+
+/// Volume mount configuration for the runtime.
+///
+/// Maps a host directory to a guest path for WASI preopened directories.
+#[derive(Debug, Clone)]
+pub struct VolumeMountConfig {
+    /// Host path to the volume directory.
+    pub host_path: PathBuf,
+    /// Guest path where the volume will be mounted (e.g., "/data").
+    pub guest_path: String,
+    /// Whether the volume is read-only.
+    pub read_only: bool,
+}
+
+impl VolumeMountConfig {
+    /// Creates a new volume mount config.
+    #[must_use]
+    pub fn new(host_path: PathBuf, guest_path: String) -> Self {
+        Self {
+            host_path,
+            guest_path,
+            read_only: false,
+        }
+    }
+
+    /// Creates a read-only volume mount config.
+    #[must_use]
+    pub fn read_only(host_path: PathBuf, guest_path: String) -> Self {
+        Self {
+            host_path,
+            guest_path,
+            read_only: true,
+        }
+    }
+}
 
 /// Configuration for creating a runtime.
 #[derive(Debug, Clone)]
@@ -34,6 +69,9 @@ pub struct RuntimeConfig {
 
     /// Enable epoch-based interruption.
     pub epoch_interruption: bool,
+
+    /// Volume mounts for persistent storage.
+    pub volume_mounts: Vec<VolumeMountConfig>,
 }
 
 impl Default for RuntimeConfig {
@@ -45,6 +83,7 @@ impl Default for RuntimeConfig {
             inherit_stdio: true,
             fuel_limit: None,
             epoch_interruption: false,
+            volume_mounts: Vec::new(),
         }
     }
 }
@@ -248,6 +287,9 @@ impl Runtime {
         // Configure filesystem access (based on capabilities)
         self.configure_filesystem(&mut builder)?;
 
+        // Configure volume mounts
+        self.configure_volume_mounts(&mut builder)?;
+
         Ok(builder.build())
     }
 
@@ -329,6 +371,46 @@ impl Runtime {
         Ok(())
     }
 
+    /// Configure volume mounts for persistent storage.
+    fn configure_volume_mounts(&self, builder: &mut WasiCtxBuilder) -> Result<()> {
+        if self.config.volume_mounts.is_empty() {
+            return Ok(());
+        }
+
+        for mount in &self.config.volume_mounts {
+            if !mount.host_path.exists() {
+                debug!(
+                    host_path = %mount.host_path.display(),
+                    guest_path = %mount.guest_path,
+                    "Volume mount host path does not exist, skipping"
+                );
+                continue;
+            }
+
+            let (dir_perms, file_perms) = if mount.read_only {
+                (DirPerms::READ, FilePerms::READ)
+            } else {
+                (DirPerms::all(), FilePerms::READ | FilePerms::WRITE)
+            };
+
+            debug!(
+                host_path = %mount.host_path.display(),
+                guest_path = %mount.guest_path,
+                read_only = mount.read_only,
+                "Mounting volume"
+            );
+
+            builder
+                .preopened_dir(&mount.host_path, &mount.guest_path, dir_perms, file_perms)
+                .map_err(|e| RuntimeError::FilesystemDenied {
+                    path: mount.host_path.clone(),
+                    operation: format!("mount volume at {}: {e}", mount.guest_path),
+                })?;
+        }
+
+        Ok(())
+    }
+
     /// Get the capabilities this runtime was configured with.
     #[must_use]
     pub const fn capabilities(&self) -> &Capabilities {
@@ -400,8 +482,7 @@ mod tests {
             ..Default::default()
         };
 
-        let runtime =
-            Runtime::new(&minimal_component(), config).expect("Failed to create runtime");
+        let runtime = Runtime::new(&minimal_component(), config).expect("Failed to create runtime");
 
         assert!(runtime.is_network_allowed("api.example.com", 443));
         assert!(!runtime.is_network_allowed("evil.com", 443));
@@ -441,8 +522,7 @@ mod tests {
             ..Default::default()
         };
 
-        let runtime =
-            Runtime::new(&minimal_component(), config).expect("Failed to create runtime");
+        let runtime = Runtime::new(&minimal_component(), config).expect("Failed to create runtime");
         let caps = runtime.capabilities();
 
         assert!(caps.can_read("/tmp/file.txt"));

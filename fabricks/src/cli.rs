@@ -88,6 +88,11 @@ pub enum Commands {
     /// Create, manage, and inspect networks.
     Network(NetworkArgs),
 
+    /// Volume management commands.
+    ///
+    /// Create, manage, and inspect persistent volumes.
+    Volume(VolumeArgs),
+
     /// List locally stored modules.
     ///
     /// Shows all modules built or pulled to local storage.
@@ -540,4 +545,63 @@ pub enum NetworkIsolationArg {
     Connected,
     /// Completely isolated from other networks.
     Isolated,
+}
+
+/// Arguments for volume commands.
+#[derive(Args, Debug)]
+pub struct VolumeArgs {
+    /// Custom socket path.
+    #[arg(long, global = true)]
+    pub socket: Option<PathBuf>,
+
+    #[command(subcommand)]
+    pub command: VolumeCommands,
+}
+
+/// Volume subcommands.
+#[derive(Subcommand, Debug)]
+pub enum VolumeCommands {
+    /// Create a new volume.
+    Create {
+        /// Volume name.
+        name: String,
+
+        /// Volume description.
+        #[arg(short, long)]
+        description: Option<String>,
+
+        /// Optional size limit (e.g., "1Gi", "500Mi").
+        #[arg(short, long)]
+        size: Option<String>,
+
+        /// Output format.
+        #[arg(short, long, value_enum, default_value = "text")]
+        format: OutputFormat,
+    },
+
+    /// List all volumes.
+    #[command(name = "ls", alias = "list")]
+    List {
+        /// Output format.
+        #[arg(short, long, value_enum, default_value = "text")]
+        format: OutputFormat,
+    },
+
+    /// Get detailed information about a volume.
+    #[command(alias = "get")]
+    Inspect {
+        /// Volume ID or name.
+        volume: String,
+
+        /// Output format.
+        #[arg(short, long, value_enum, default_value = "text")]
+        format: OutputFormat,
+    },
+
+    /// Delete a volume.
+    #[command(name = "rm", alias = "remove")]
+    Remove {
+        /// Volume ID or name.
+        volume: String,
+    },
 }

@@ -14,12 +14,12 @@ mod types;
 mod validation;
 
 pub use manager::{NetworkManager, SharedNetworkManager};
-pub use registry::{extract_service_name, ServiceRegistry, SharedServiceRegistry};
+pub use registry::{ServiceRegistry, SharedServiceRegistry, extract_service_name};
 pub use types::{
     NetworkAccess, NetworkAudit, NetworkConfig, NetworkDetail, NetworkEncryption, NetworkInfo,
     NetworkIsolation, NetworkOptions, NetworkState,
 };
 pub use validation::{
-    validate_connection, validate_ingress, validate_listen_port, ConnectionDecision,
-    IngressDecision,
+    ConnectionDecision, IngressDecision, validate_connection, validate_ingress,
+    validate_listen_port,
 };

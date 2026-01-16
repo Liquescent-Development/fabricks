@@ -14,6 +14,8 @@ use fabricks_common::models::capability::Capabilities;
 use fabricks_common::models::common::{Replicas, Resources};
 use fabricks_common::models::health_check::HealthCheck;
 
+use crate::volume::VolumeMount;
+
 // Re-export ServiceType from common crate - the single source of truth
 pub use fabricks_common::models::fabrickfile::ServiceType;
 
@@ -105,7 +107,6 @@ impl std::fmt::Display for InstanceState {
     }
 }
 
-
 /// Configuration for creating a service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceConfig {
@@ -156,6 +157,10 @@ pub struct ServiceConfig {
     #[serde(default)]
     pub networks: Vec<String>,
 
+    /// Volume mounts for persistent storage.
+    #[serde(default)]
+    pub volumes: Vec<VolumeMount>,
+
     /// Optional mortar project this service belongs to.
     #[serde(default)]
     pub mortar_project: Option<String>,
@@ -179,6 +184,7 @@ impl ServiceConfig {
             health_check: None,
             depends_on: Vec::new(),
             networks: Vec::new(),
+            volumes: Vec::new(),
             mortar_project: None,
         }
     }

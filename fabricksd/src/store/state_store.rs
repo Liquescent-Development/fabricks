@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use sled::Db;
 
 use crate::error::Result;
@@ -186,6 +186,46 @@ impl StateStore {
     pub fn list_networks(&self) -> Result<Vec<crate::network::NetworkState>> {
         self.list(trees::NETWORKS)
     }
+
+    // -------------------------------------------------------------------------
+    // Volume convenience methods
+    // -------------------------------------------------------------------------
+
+    /// Saves a volume state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serialization or database operation fails.
+    pub fn save_volume(&self, volume: &crate::volume::VolumeState) -> Result<()> {
+        self.put(trees::VOLUMES, &volume.id, volume)
+    }
+
+    /// Deletes a volume state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database operation fails.
+    pub fn delete_volume(&self, id: &str) -> Result<bool> {
+        self.delete(trees::VOLUMES, id)
+    }
+
+    /// Gets a volume state by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if deserialization or database operation fails.
+    pub fn get_volume(&self, id: &str) -> Result<Option<crate::volume::VolumeState>> {
+        self.get(trees::VOLUMES, id)
+    }
+
+    /// Lists all volume states.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if deserialization or database operation fails.
+    pub fn list_volumes(&self) -> Result<Vec<crate::volume::VolumeState>> {
+        self.list(trees::VOLUMES)
+    }
 }
 
 #[cfg(test)]
@@ -226,7 +266,8 @@ mod tests {
     fn test_get_nonexistent() {
         let (store, _dir) = create_test_store();
 
-        let retrieved: Option<TestData> = store.get("test_tree", "nonexistent").expect("should get");
+        let retrieved: Option<TestData> =
+            store.get("test_tree", "nonexistent").expect("should get");
         assert_eq!(retrieved, None);
     }
 
@@ -252,7 +293,9 @@ mod tests {
     fn test_delete_nonexistent() {
         let (store, _dir) = create_test_store();
 
-        let deleted = store.delete("test_tree", "nonexistent").expect("should delete");
+        let deleted = store
+            .delete("test_tree", "nonexistent")
+            .expect("should delete");
         assert!(!deleted);
     }
 

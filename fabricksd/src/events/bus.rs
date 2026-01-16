@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 
 use super::types::{Event, EventType};
 
@@ -133,9 +133,12 @@ mod tests {
         let mut rx = bus.subscribe().await;
         assert_eq!(bus.subscriber_count().await, 1);
 
-        let event = Event::new(EventType::DaemonStarted, serde_json::json!({
-            "version": "1.0.0"
-        }));
+        let event = Event::new(
+            EventType::DaemonStarted,
+            serde_json::json!({
+                "version": "1.0.0"
+            }),
+        );
 
         bus.publish(event.clone()).await;
 
@@ -229,9 +232,12 @@ mod tests {
         let bus = EventBus::new(10, 5); // max 5 events
 
         for i in 0..10 {
-            bus.publish(Event::new(EventType::ServiceCreated, serde_json::json!({
-                "index": i
-            })))
+            bus.publish(Event::new(
+                EventType::ServiceCreated,
+                serde_json::json!({
+                    "index": i
+                }),
+            ))
             .await;
         }
 

@@ -19,6 +19,7 @@ use wasmtime_wasi::{AsyncStdinStream, AsyncStdoutStream, WasiCtx, WasiCtxBuilder
 use fabricks_common::Capabilities;
 
 use crate::error::{Result, RuntimeError};
+use crate::runtime::VolumeMountConfig;
 
 /// Configuration for the TCP runtime.
 #[derive(Debug, Clone, Default)]
@@ -34,6 +35,9 @@ pub struct TcpRuntimeConfig {
 
     /// Connection timeout.
     pub connection_timeout: Option<Duration>,
+
+    /// Volume mounts for persistent storage.
+    pub volume_mounts: Vec<VolumeMountConfig>,
 }
 
 /// State for TCP WASM execution.
@@ -159,11 +163,9 @@ impl TcpRuntime {
     /// # Errors
     ///
     /// Returns an error if the connection cannot be handled.
-    pub async fn handle_connection(
-        &self,
-        stream: TcpStream,
-        peer_addr: SocketAddr,
-    ) -> Result<()> {
+    pub async fn handle_connection(&self, stream: TcpStream, peer_addr: SocketAddr) -> Result<()> {
+        use wasmtime_wasi::bindings::Command;
+
         debug!(%peer_addr, "Handling TCP connection");
 
         // Split the stream into read and write halves
@@ -201,8 +203,6 @@ impl TcpRuntime {
         wasmtime_wasi::add_to_linker_async(&mut linker)?;
 
         // Use the Command bindings to instantiate and run
-        use wasmtime_wasi::bindings::Command;
-
         let command = Command::instantiate_async(&mut store, &self.component, &linker)
             .await
             .map_err(|e| RuntimeError::InstantiationError {
@@ -256,6 +256,9 @@ impl TcpRuntime {
 
         // Configure filesystem access (based on capabilities)
         self.configure_filesystem(&mut builder)?;
+
+        // Configure volume mounts
+        self.configure_volume_mounts(&mut builder)?;
 
         Ok(builder.build())
     }
@@ -335,6 +338,48 @@ impl TcpRuntime {
                         })?;
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    /// Configure volume mounts for persistent storage.
+    fn configure_volume_mounts(&self, builder: &mut WasiCtxBuilder) -> Result<()> {
+        use wasmtime_wasi::{DirPerms, FilePerms};
+
+        if self.config.volume_mounts.is_empty() {
+            return Ok(());
+        }
+
+        for mount in &self.config.volume_mounts {
+            if !mount.host_path.exists() {
+                debug!(
+                    host_path = %mount.host_path.display(),
+                    guest_path = %mount.guest_path,
+                    "Volume mount host path does not exist, skipping"
+                );
+                continue;
+            }
+
+            let (dir_perms, file_perms) = if mount.read_only {
+                (DirPerms::READ, FilePerms::READ)
+            } else {
+                (DirPerms::all(), FilePerms::READ | FilePerms::WRITE)
+            };
+
+            debug!(
+                host_path = %mount.host_path.display(),
+                guest_path = %mount.guest_path,
+                read_only = mount.read_only,
+                "Mounting volume"
+            );
+
+            builder
+                .preopened_dir(&mount.host_path, &mount.guest_path, dir_perms, file_perms)
+                .map_err(|e| RuntimeError::FilesystemDenied {
+                    path: mount.host_path.clone(),
+                    operation: format!("mount volume at {}: {e}", mount.guest_path),
+                })?;
         }
 
         Ok(())

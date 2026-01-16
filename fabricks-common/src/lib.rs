@@ -8,6 +8,7 @@
 //! - [`error`] - Error types for validation and parsing
 //! - [`parser`] - File parsing functions for configuration files
 //! - [`validation`] - Validation logic and traits
+//! - [`mortar`] - Mortar file processing utilities (variable resolution)
 //!
 //! # Example
 //!
@@ -32,12 +33,14 @@
 
 pub mod error;
 pub mod models;
+pub mod mortar;
 pub mod parser;
 pub mod validation;
 
 // Re-export commonly used types at crate root for convenience.
-pub use error::{ParseError, ValidationError};
+pub use error::{CommonError, ParseError, ValidationError};
 pub use models::{Capabilities, Fabrickfile, MortarFile};
+pub use mortar::{VariableResolver, VariableValue};
 pub use parser::{
     parse_fabrickfile, parse_fabrickfile_str, parse_mortar_file, parse_mortar_file_str,
 };

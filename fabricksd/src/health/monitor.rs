@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use reqwest::Client;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tokio::time::interval;
 use tracing::{debug, info, warn};
 
@@ -44,18 +44,18 @@ impl HealthCheckRegistration {
 
     /// Returns the interval for this check.
     fn interval(&self) -> Duration {
-        self.http_check
-            .interval
-            .as_ref()
-            .map_or(Duration::from_secs(30), fabricks_common::models::Duration::as_std)
+        self.http_check.interval.as_ref().map_or(
+            Duration::from_secs(30),
+            fabricks_common::models::Duration::as_std,
+        )
     }
 
     /// Returns the timeout for this check.
     fn timeout(&self) -> Duration {
-        self.http_check
-            .timeout
-            .as_ref()
-            .map_or(Duration::from_secs(5), fabricks_common::models::Duration::as_std)
+        self.http_check.timeout.as_ref().map_or(
+            Duration::from_secs(5),
+            fabricks_common::models::Duration::as_std,
+        )
     }
 
     /// Schedules the next check.
@@ -105,12 +105,7 @@ impl HealthMonitor {
     }
 
     /// Registers a service for health monitoring.
-    pub async fn register(
-        &self,
-        service_id: String,
-        http_check: HttpHealthCheck,
-        port: u16,
-    ) {
+    pub async fn register(&self, service_id: String, http_check: HttpHealthCheck, port: u16) {
         let registration = HealthCheckRegistration::new(service_id.clone(), http_check, port);
 
         let mut registrations = self.registrations.write().await;
@@ -231,7 +226,9 @@ impl HealthMonitor {
 
         let start = Instant::now();
 
-        let result = self.execute_http_check(&url, method, timeout, expected_status).await;
+        let result = self
+            .execute_http_check(&url, method, timeout, expected_status)
+            .await;
         let elapsed = start.elapsed();
 
         // Record the result
@@ -257,10 +254,7 @@ impl HealthMonitor {
                         elapsed_ms = %elapsed.as_millis(),
                         "Health check failed"
                     );
-                    health.record(
-                        HealthCheckResult::unhealthy(error),
-                        self.config.max_history,
-                    );
+                    health.record(HealthCheckResult::unhealthy(error), self.config.max_history);
                 }
             }
         }
@@ -297,7 +291,9 @@ impl HealthMonitor {
         if status == expected_status {
             Ok(status)
         } else {
-            Err(format!("Unexpected status: {status}, expected: {expected_status}"))
+            Err(format!(
+                "Unexpected status: {status}, expected: {expected_status}"
+            ))
         }
     }
 
@@ -328,7 +324,9 @@ impl HealthMonitor {
         let url = format!("http://127.0.0.1:{}{}", registration.port, path);
 
         let start = Instant::now();
-        let result = self.execute_http_check(&url, method, timeout, expected_status).await;
+        let result = self
+            .execute_http_check(&url, method, timeout, expected_status)
+            .await;
         let elapsed = start.elapsed();
 
         let check_result = match result {
@@ -470,11 +468,7 @@ mod tests {
 
     #[test]
     fn test_health_check_registration() {
-        let mut reg = HealthCheckRegistration::new(
-            "svc-1".to_string(),
-            test_http_check(),
-            8080,
-        );
+        let mut reg = HealthCheckRegistration::new("svc-1".to_string(), test_http_check(), 8080);
 
         // Should be due immediately after creation
         assert!(reg.is_due());

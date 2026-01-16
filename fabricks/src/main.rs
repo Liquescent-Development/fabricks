@@ -17,6 +17,7 @@
 //! - `fabricks service` - Service management commands
 //! - `fabricks mortar` - Mortar project commands
 //! - `fabricks network` - Network management commands
+//! - `fabricks volume` - Volume management commands
 
 use std::process::ExitCode;
 
@@ -62,6 +63,7 @@ fn main() -> ExitCode {
         Commands::Service(args) => rt.block_on(commands::service::run(&args)),
         Commands::Mortar(args) => rt.block_on(commands::mortar::run(&args)),
         Commands::Network(args) => rt.block_on(commands::network::run(&args)),
+        Commands::Volume(args) => rt.block_on(commands::volume::run(&args)),
         Commands::Images(args) => rt.block_on(commands::images::run(&args)),
     };
 

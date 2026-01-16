@@ -1,8 +1,8 @@
 //! Axum router configuration.
 
 use axum::{
-    routing::{delete, get, post},
     Router,
+    routing::{delete, get, post},
 };
 use tower_http::trace::TraceLayer;
 
@@ -21,7 +21,10 @@ pub fn build_router(state: AppState) -> Router {
         // Service management
         .route("/v1/services", get(handlers::services::list_services))
         .route("/v1/services", post(handlers::services::create_service))
-        .route("/v1/services/run", post(handlers::services::run_fabrickfile))
+        .route(
+            "/v1/services/run",
+            post(handlers::services::run_fabrickfile),
+        )
         .route("/v1/services/{id}", get(handlers::services::get_service))
         .route(
             "/v1/services/{id}",
@@ -41,10 +44,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         // Mortar project management
         .route("/v1/mortar/deploy", post(handlers::mortar::deploy_mortar))
-        .route(
-            "/v1/mortar/projects",
-            get(handlers::mortar::list_projects),
-        )
+        .route("/v1/mortar/projects", get(handlers::mortar::list_projects))
         .route(
             "/v1/mortar/projects/{name}",
             get(handlers::mortar::get_project_services),
@@ -69,11 +69,13 @@ pub fn build_router(state: AppState) -> Router {
             "/v1/networks/{id}/leave",
             post(handlers::networks::leave_network),
         )
+        // Volume management
+        .route("/v1/volumes", post(handlers::volumes::create_volume))
+        .route("/v1/volumes", get(handlers::volumes::list_volumes))
+        .route("/v1/volumes/{id}", get(handlers::volumes::get_volume))
+        .route("/v1/volumes/{id}", delete(handlers::volumes::delete_volume))
         // Health monitoring
-        .route(
-            "/v1/health/services",
-            get(handlers::health::get_all_health),
-        )
+        .route("/v1/health/services", get(handlers::health::get_all_health))
         .route(
             "/v1/services/{id}/health",
             get(handlers::health::get_service_health),
@@ -159,8 +161,7 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("should read body");
-        let json: serde_json::Value =
-            serde_json::from_slice(&body).expect("should parse json");
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("should parse json");
 
         assert_eq!(json["status"], "success");
         assert!(json["data"]["version"].is_string());

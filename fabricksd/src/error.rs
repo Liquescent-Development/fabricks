@@ -77,6 +77,37 @@ pub enum DaemonError {
         id: String,
     },
 
+    /// Volume already exists.
+    #[error("volume already exists with name: {0}")]
+    VolumeExists(String),
+
+    /// Volume is mounted and cannot be deleted.
+    #[error("volume '{id}' is mounted by services: {services:?}")]
+    VolumeMounted {
+        /// Volume ID.
+        id: String,
+        /// Services that have the volume mounted.
+        services: Vec<String>,
+    },
+
+    /// Failed to create volume directory.
+    #[error("failed to create volume '{name}': {reason}")]
+    VolumeCreateFailed {
+        /// Volume name.
+        name: String,
+        /// Reason for the failure.
+        reason: String,
+    },
+
+    /// Failed to delete volume directory.
+    #[error("failed to delete volume '{id}': {reason}")]
+    VolumeDeleteFailed {
+        /// Volume ID.
+        id: String,
+        /// Reason for the failure.
+        reason: String,
+    },
+
     /// Invalid state transition.
     #[error("invalid state transition from '{from}' to '{to}'")]
     InvalidStateTransition {
@@ -132,7 +163,9 @@ pub enum DaemonError {
     },
 
     /// Dependency not found.
-    #[error("dependency not found: service '{service}' depends on '{dependency}' which does not exist")]
+    #[error(
+        "dependency not found: service '{service}' depends on '{dependency}' which does not exist"
+    )]
     DependencyNotFound {
         /// Service name.
         service: String,

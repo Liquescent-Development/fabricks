@@ -133,7 +133,10 @@ impl FabricksModule {
 
         // Add optional metadata
         if let Some(ref desc) = self.config.info.description {
-            annotations.insert(media_types::ANNOTATION_DESCRIPTION.to_string(), desc.clone());
+            annotations.insert(
+                media_types::ANNOTATION_DESCRIPTION.to_string(),
+                desc.clone(),
+            );
         }
 
         if let Some(ref authors) = self.config.info.authors {
@@ -168,8 +171,8 @@ pub struct PulledModule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabricks_common::models::fabrickfile::Info;
     use fabricks_common::Capabilities;
+    use fabricks_common::models::fabrickfile::Info;
 
     fn test_config() -> Fabrickfile {
         Fabrickfile {
@@ -226,7 +229,10 @@ mod tests {
         let module = FabricksModule::new(test_config(), vec![]);
         let annotations = module.build_annotations();
 
-        assert_eq!(annotations.get(media_types::ANNOTATION_NAME), Some(&"test-module".to_string()));
+        assert_eq!(
+            annotations.get(media_types::ANNOTATION_NAME),
+            Some(&"test-module".to_string())
+        );
         assert_eq!(
             annotations.get(media_types::ANNOTATION_VERSION),
             Some(&"1.0.0".to_string())

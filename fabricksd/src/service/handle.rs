@@ -165,10 +165,7 @@ impl ServiceHandle {
         let state = self.state.read().await;
         let instances_guard = self.instances.lock().await;
 
-        let instances: Vec<Instance> = instances_guard
-            .iter()
-            .map(|h| h.instance.clone())
-            .collect();
+        let instances: Vec<Instance> = instances_guard.iter().map(|h| h.instance.clone()).collect();
 
         ServiceDetail {
             id: state.id.clone(),
@@ -213,12 +210,13 @@ impl ServiceHandle {
         })?;
 
         let outbound_guard = self.outbound_handler.read().await;
-        let outbound_handler = outbound_guard.as_ref().ok_or_else(|| {
-            DaemonError::ServiceError {
-                id: String::new(),
-                reason: "Outbound handler not configured".to_string(),
-            }
-        })?;
+        let outbound_handler =
+            outbound_guard
+                .as_ref()
+                .ok_or_else(|| DaemonError::ServiceError {
+                    id: String::new(),
+                    reason: "Outbound handler not configured".to_string(),
+                })?;
 
         runtime
             .handle_request(request, Arc::clone(outbound_handler))
@@ -267,23 +265,36 @@ impl ServiceHandle {
     /// Called during `start()` for HTTP services. Also sets up the outbound handler
     /// for validating outbound connections.
     async fn create_http_runtime(&self) -> Result<()> {
+        use fabricks_runtime::VolumeMountConfig;
+
         let state = self.state.read().await;
         let capabilities = state.config.capabilities.clone();
+        let service_volumes = state.config.volumes.clone();
         drop(state);
+
+        // Convert daemon VolumeMount to runtime VolumeMountConfig
+        let volume_mounts: Vec<VolumeMountConfig> = service_volumes
+            .iter()
+            .map(|vm| VolumeMountConfig {
+                host_path: vm.host_path.clone(),
+                guest_path: vm.guest_path.clone(),
+                read_only: vm.read_only,
+            })
+            .collect();
 
         let config = HttpRuntimeConfig {
             capabilities: capabilities.clone(),
             args: Vec::new(),
             fuel_limit: None,
             epoch_interruption: false,
+            volume_mounts,
         };
 
-        let runtime = HttpRuntime::new(&self.wasm_bytes, config).map_err(|e| {
-            DaemonError::ServiceError {
+        let runtime =
+            HttpRuntime::new(&self.wasm_bytes, config).map_err(|e| DaemonError::ServiceError {
                 id: String::new(),
                 reason: format!("Failed to create HTTP runtime: {e}"),
-            }
-        })?;
+            })?;
 
         let mut runtime_guard = self.http_runtime.write().await;
         *runtime_guard = Some(Arc::new(runtime));
@@ -302,24 +313,37 @@ impl ServiceHandle {
     ///
     /// Called during `start()` for TCP services.
     async fn create_tcp_runtime(&self) -> Result<()> {
+        use fabricks_runtime::VolumeMountConfig;
+
         let state = self.state.read().await;
         let capabilities = state.config.capabilities.clone();
         let args = state.config.args.clone();
+        let service_volumes = state.config.volumes.clone();
         drop(state);
+
+        // Convert daemon VolumeMount to runtime VolumeMountConfig
+        let volume_mounts: Vec<VolumeMountConfig> = service_volumes
+            .iter()
+            .map(|vm| VolumeMountConfig {
+                host_path: vm.host_path.clone(),
+                guest_path: vm.guest_path.clone(),
+                read_only: vm.read_only,
+            })
+            .collect();
 
         let config = TcpRuntimeConfig {
             capabilities,
             args,
             fuel_limit: None,
             connection_timeout: None,
+            volume_mounts,
         };
 
-        let runtime = TcpRuntime::new(&self.wasm_bytes, config).map_err(|e| {
-            DaemonError::ServiceError {
+        let runtime =
+            TcpRuntime::new(&self.wasm_bytes, config).map_err(|e| DaemonError::ServiceError {
                 id: String::new(),
                 reason: format!("Failed to create TCP runtime: {e}"),
-            }
-        })?;
+            })?;
 
         let mut runtime_guard = self.tcp_runtime.write().await;
         *runtime_guard = Some(Arc::new(runtime));
@@ -408,7 +432,9 @@ impl ServiceHandle {
 
         // Spawn instances for command services
         if service_type.is_command() {
-            let spawn_errors = self.spawn_command_instances(&service_id, desired_replicas).await;
+            let spawn_errors = self
+                .spawn_command_instances(&service_id, desired_replicas)
+                .await;
 
             // Update state based on spawn results
             let mut state = self.state.write().await;

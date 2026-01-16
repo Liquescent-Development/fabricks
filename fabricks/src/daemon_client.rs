@@ -4,11 +4,11 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use http_body_util::{BodyExt, Empty, Full};
-use hyper::body::Bytes;
 use hyper::Request;
+use hyper::body::Bytes;
 use hyper_util::rt::TokioIo;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use tokio::net::UnixStream;
 
 /// Client for communicating with the fabricksd daemon.
@@ -335,6 +335,82 @@ pub struct LeaveNetworkRequest {
     pub service_id: String,
 }
 
+// ==================== Volume Types ====================
+
+/// Create volume request.
+#[derive(Debug, serde::Serialize)]
+pub struct CreateVolumeRequest {
+    /// Volume name.
+    pub name: String,
+    /// Optional description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Optional size limit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<String>,
+}
+
+/// Create volume response.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct CreateVolumeResponse {
+    /// Created volume ID.
+    pub id: String,
+    /// Volume name.
+    pub name: String,
+}
+
+/// List volumes response.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct ListVolumesResponse {
+    /// List of volumes.
+    pub volumes: Vec<VolumeInfo>,
+    /// Total count.
+    pub total: usize,
+}
+
+/// Volume information (summary).
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct VolumeInfo {
+    /// Volume ID.
+    pub id: String,
+    /// Volume name.
+    pub name: String,
+    /// Optional description.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Optional size limit.
+    #[serde(default)]
+    pub size: Option<String>,
+    /// Number of services using this volume.
+    pub mount_count: usize,
+    /// When the volume was created.
+    pub created_at: String,
+}
+
+/// Volume detail (full information).
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct VolumeDetail {
+    /// Volume ID.
+    pub id: String,
+    /// Volume name.
+    pub name: String,
+    /// Optional description.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Optional size limit.
+    #[serde(default)]
+    pub size: Option<String>,
+    /// Host path for the volume.
+    pub path: String,
+    /// Service IDs that have this volume mounted.
+    #[serde(default)]
+    pub mounted_by: Vec<String>,
+    /// When the volume was created.
+    pub created_at: String,
+    /// When the volume was last updated.
+    pub updated_at: String,
+}
+
 impl DaemonClient {
     /// Creates a new daemon client.
     ///
@@ -373,7 +449,10 @@ impl DaemonClient {
     }
 
     /// Runs a Fabrickfile through the daemon.
-    pub async fn run_fabrickfile(&self, req: RunFabrickfileRequest) -> Result<CreateServiceResponse> {
+    pub async fn run_fabrickfile(
+        &self,
+        req: RunFabrickfileRequest,
+    ) -> Result<CreateServiceResponse> {
         self.post("/v1/services/run", &req).await
     }
 
@@ -389,7 +468,11 @@ impl DaemonClient {
 
     /// Scales a service.
     pub async fn scale_service(&self, id: &str, replicas: usize) -> Result<()> {
-        self.post(&format!("/v1/services/{id}/scale"), &ScaleServiceRequest { replicas }).await
+        self.post(
+            &format!("/v1/services/{id}/scale"),
+            &ScaleServiceRequest { replicas },
+        )
+        .await
     }
 
     /// Deletes a service.
@@ -401,7 +484,8 @@ impl DaemonClient {
 
     /// Deploys a mortar project.
     pub async fn deploy_mortar(&self, mortar_path: PathBuf) -> Result<DeployMortarResponse> {
-        self.post("/v1/mortar/deploy", &DeployMortarRequest { mortar_path }).await
+        self.post("/v1/mortar/deploy", &DeployMortarRequest { mortar_path })
+            .await
     }
 
     /// Lists all mortar projects.
@@ -443,12 +527,36 @@ impl DaemonClient {
 
     /// Adds a service to a network.
     pub async fn join_network(&self, network_id: &str, req: JoinNetworkRequest) -> Result<()> {
-        self.post(&format!("/v1/networks/{network_id}/join"), &req).await
+        self.post(&format!("/v1/networks/{network_id}/join"), &req)
+            .await
     }
 
     /// Removes a service from a network.
     pub async fn leave_network(&self, network_id: &str, req: LeaveNetworkRequest) -> Result<()> {
-        self.post(&format!("/v1/networks/{network_id}/leave"), &req).await
+        self.post(&format!("/v1/networks/{network_id}/leave"), &req)
+            .await
+    }
+
+    // ==================== Volume Operations ====================
+
+    /// Creates a new volume.
+    pub async fn create_volume(&self, req: CreateVolumeRequest) -> Result<CreateVolumeResponse> {
+        self.post("/v1/volumes", &req).await
+    }
+
+    /// Lists all volumes.
+    pub async fn list_volumes(&self) -> Result<ListVolumesResponse> {
+        self.get("/v1/volumes").await
+    }
+
+    /// Gets details about a specific volume.
+    pub async fn get_volume(&self, id: &str) -> Result<VolumeDetail> {
+        self.get(&format!("/v1/volumes/{id}")).await
+    }
+
+    /// Deletes a volume.
+    pub async fn delete_volume(&self, id: &str) -> Result<()> {
+        self.delete(&format!("/v1/volumes/{id}")).await
     }
 
     // ==================== HTTP Methods ====================

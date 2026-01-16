@@ -4,7 +4,9 @@
 //! with real state and service management.
 
 use fabricks_common::models::health_check::HttpHealthCheck;
-use fabricks_e2e::helpers::{create_temp_wasm, minimal_wasm_component, test_service_config, TestEnv};
+use fabricks_e2e::helpers::{
+    TestEnv, create_temp_wasm, minimal_wasm_component, test_service_config,
+};
 use fabricksd::service::State;
 
 /// Test that the daemon state initializes correctly.
@@ -21,12 +23,16 @@ async fn test_daemon_initialization() {
 #[tokio::test]
 async fn test_create_service() {
     let env = TestEnv::new().await.expect("should create test env");
-    let (_temp_dir, wasm_path) = create_temp_wasm(&minimal_wasm_component()).expect("should create wasm");
+    let (_temp_dir, wasm_path) =
+        create_temp_wasm(&minimal_wasm_component()).expect("should create wasm");
 
     let config = test_service_config("test-service", wasm_path, "sha256:test");
 
     let manager = env.service_manager().read().await;
-    let id = manager.create_service(config).await.expect("should create service");
+    let id = manager
+        .create_service(config)
+        .await
+        .expect("should create service");
 
     // Verify service exists
     let detail = manager.get_service(&id).await.expect("should get service");
@@ -38,7 +44,8 @@ async fn test_create_service() {
 #[tokio::test]
 async fn test_list_services() {
     let env = TestEnv::new().await.expect("should create test env");
-    let (_temp_dir, wasm_path) = create_temp_wasm(&minimal_wasm_component()).expect("should create wasm");
+    let (_temp_dir, wasm_path) =
+        create_temp_wasm(&minimal_wasm_component()).expect("should create wasm");
 
     let manager = env.service_manager().read().await;
 
@@ -48,7 +55,10 @@ async fn test_list_services() {
 
     // Create a service
     let config = test_service_config("list-test", wasm_path, "sha256:test");
-    let _id = manager.create_service(config).await.expect("should create service");
+    let _id = manager
+        .create_service(config)
+        .await
+        .expect("should create service");
 
     // Now should have one service
     let services = manager.list_services().await;
@@ -60,29 +70,42 @@ async fn test_list_services() {
 #[tokio::test]
 async fn test_service_lifecycle() {
     let env = TestEnv::new().await.expect("should create test env");
-    let (_temp_dir, wasm_path) = create_temp_wasm(&minimal_wasm_component()).expect("should create wasm");
+    let (_temp_dir, wasm_path) =
+        create_temp_wasm(&minimal_wasm_component()).expect("should create wasm");
 
     // Create service with no replicas (for quick testing)
     let mut config = test_service_config("lifecycle-test", wasm_path, "sha256:test");
     config.replicas.min = 0;
 
     let manager = env.service_manager().read().await;
-    let id = manager.create_service(config).await.expect("should create service");
+    let id = manager
+        .create_service(config)
+        .await
+        .expect("should create service");
 
     // Start the service
-    manager.start_service(&id).await.expect("should start service");
+    manager
+        .start_service(&id)
+        .await
+        .expect("should start service");
 
     let detail = manager.get_service(&id).await.expect("should get service");
     assert_eq!(detail.state, State::Running);
 
     // Stop the service
-    manager.stop_service(&id).await.expect("should stop service");
+    manager
+        .stop_service(&id)
+        .await
+        .expect("should stop service");
 
     let detail = manager.get_service(&id).await.expect("should get service");
     assert_eq!(detail.state, State::Stopped);
 
     // Delete the service
-    manager.delete_service(&id).await.expect("should delete service");
+    manager
+        .delete_service(&id)
+        .await
+        .expect("should delete service");
 
     // Verify service is gone
     let result = manager.get_service(&id).await;
@@ -93,12 +116,16 @@ async fn test_service_lifecycle() {
 #[tokio::test]
 async fn test_duplicate_service_name_rejected() {
     let env = TestEnv::new().await.expect("should create test env");
-    let (_temp_dir, wasm_path) = create_temp_wasm(&minimal_wasm_component()).expect("should create wasm");
+    let (_temp_dir, wasm_path) =
+        create_temp_wasm(&minimal_wasm_component()).expect("should create wasm");
 
     let manager = env.service_manager().read().await;
 
     let config1 = test_service_config("dupe-test", wasm_path.clone(), "sha256:test1");
-    let _id1 = manager.create_service(config1).await.expect("should create first service");
+    let _id1 = manager
+        .create_service(config1)
+        .await
+        .expect("should create first service");
 
     let config2 = test_service_config("dupe-test", wasm_path, "sha256:test2");
     let result = manager.create_service(config2).await;
@@ -151,7 +178,8 @@ async fn test_network_management() {
 #[tokio::test]
 async fn test_network_service_membership() {
     let env = TestEnv::new().await.expect("should create test env");
-    let (_temp_dir, wasm_path) = create_temp_wasm(&minimal_wasm_component()).expect("should create wasm");
+    let (_temp_dir, wasm_path) =
+        create_temp_wasm(&minimal_wasm_component()).expect("should create wasm");
 
     // Create a network
     let config = fabricksd::network::NetworkConfig::new("member-network".to_string());
@@ -165,7 +193,10 @@ async fn test_network_service_membership() {
     // Create a service
     let svc_config = test_service_config("network-member", wasm_path, "sha256:test");
     let manager = env.service_manager().read().await;
-    let svc_id = manager.create_service(svc_config).await.expect("should create service");
+    let svc_id = manager
+        .create_service(svc_config)
+        .await
+        .expect("should create service");
     drop(manager);
 
     // Add service to network
@@ -222,7 +253,10 @@ async fn test_health_monitor_registration() {
         method: None,
         expected_status: None,
     };
-    env.state.health_monitor.register("test-svc".to_string(), http_check, 8080).await;
+    env.state
+        .health_monitor
+        .register("test-svc".to_string(), http_check, 8080)
+        .await;
 
     // Should now be tracked
     let health = env.state.health_monitor.get_all_health().await;
@@ -283,13 +317,10 @@ async fn test_event_bus() {
     env.state.event_bus.publish(event).await;
 
     // Receive the event
-    let received = tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        rx.recv(),
-    )
-    .await
-    .expect("should receive event")
-    .expect("channel should not close");
+    let received = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv())
+        .await
+        .expect("should receive event")
+        .expect("channel should not close");
 
     assert!(matches!(
         received.event_type,
@@ -308,11 +339,7 @@ async fn test_shutdown_signal() {
     env.state.shutdown();
 
     // Should receive signal
-    let result = tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        rx.recv(),
-    )
-    .await;
+    let result = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await;
 
     assert!(result.is_ok(), "Should receive shutdown signal");
 }

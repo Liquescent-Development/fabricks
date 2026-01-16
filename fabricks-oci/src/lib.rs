@@ -46,5 +46,5 @@ pub use module::{FabricksModule, PulledModule};
 pub use storage::LocalStorage;
 
 // Re-export oci-client types for convenience
-pub use oci_client::secrets::RegistryAuth;
 pub use oci_client::Reference;
+pub use oci_client::secrets::RegistryAuth;

@@ -260,7 +260,6 @@ impl Default for EventSettings {
     }
 }
 
-
 impl DaemonConfig {
     /// Load configuration from file or use defaults.
     ///

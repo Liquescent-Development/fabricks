@@ -13,6 +13,7 @@
 //! - [`api`] - HTTP API server and handlers
 //! - [`service`] - Service lifecycle management
 //! - [`network`] - Network isolation and service discovery
+//! - [`volume`] - Persistent volume management
 //! - [`proxy`] - HTTP proxy for routing to WASM services
 //! - [`shutdown`] - Graceful shutdown coordination
 
@@ -27,6 +28,7 @@ pub mod service;
 pub mod shutdown;
 pub mod state;
 pub mod store;
+pub mod volume;
 
 // Re-export commonly used types at crate root for convenience.
 pub use config::DaemonConfig;
@@ -38,3 +40,4 @@ pub use proxy::{EgressProxy, EgressRequest, EgressResponse, ProxyServer, Service
 pub use service::{ServiceConfig, ServiceInfo, ServiceManager};
 pub use state::AppState;
 pub use store::StateStore;
+pub use volume::{VolumeConfig, VolumeManager};

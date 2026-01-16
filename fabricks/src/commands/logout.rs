@@ -16,8 +16,7 @@ use crate::output::writeln_stderr;
 /// Returns an error if keyring access fails.
 pub fn run(args: &LogoutArgs) -> Result<()> {
     // Remove credentials
-    let removed = CredentialStore::remove(&args.registry)
-        .context("Failed to access keyring")?;
+    let removed = CredentialStore::remove(&args.registry).context("Failed to access keyring")?;
 
     if removed {
         info!("Logged out from {}", args.registry);

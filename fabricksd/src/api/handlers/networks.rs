@@ -1,9 +1,9 @@
 //! Network management API handlers.
 
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    Json,
 };
 use serde::{Deserialize, Serialize};
 
@@ -104,7 +104,10 @@ pub async fn list_networks(
     let networks = state.network_manager.list_networks().await;
     let total = networks.len();
 
-    Json(ApiResponse::success(ListNetworksResponse { networks, total }))
+    Json(ApiResponse::success(ListNetworksResponse {
+        networks,
+        total,
+    }))
 }
 
 /// GET `/v1/networks/{id}`
@@ -115,7 +118,11 @@ pub async fn get_network(
     State(state): State<AppState>,
     Path(id_or_name): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<NetworkDetail>>) {
-    match state.network_manager.get_network_by_id_or_name(&id_or_name).await {
+    match state
+        .network_manager
+        .get_network_by_id_or_name(&id_or_name)
+        .await
+    {
         Some(detail) => (StatusCode::OK, Json(ApiResponse::success(detail))),
         None => (
             StatusCode::NOT_FOUND,

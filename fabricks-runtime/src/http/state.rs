@@ -115,8 +115,16 @@ mod tests {
     #[test]
     fn test_deny_all_outbound() {
         let handler = DenyAllOutbound;
-        assert!(!handler.is_allowed("example.com", 443).expect("should not error"));
-        assert!(!handler.is_allowed("localhost", 8080).expect("should not error"));
+        assert!(
+            !handler
+                .is_allowed("example.com", 443)
+                .expect("should not error")
+        );
+        assert!(
+            !handler
+                .is_allowed("localhost", 8080)
+                .expect("should not error")
+        );
     }
 
     #[test]
@@ -125,6 +133,11 @@ mod tests {
         let state = WasiHttpState::new_deny_outbound(wasi_ctx);
 
         // State should be created successfully
-        assert!(!state.outbound_handler.is_allowed("test.com", 80).expect("should work"));
+        assert!(
+            !state
+                .outbound_handler
+                .is_allowed("test.com", 80)
+                .expect("should work")
+        );
     }
 }

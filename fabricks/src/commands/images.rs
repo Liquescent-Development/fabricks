@@ -30,7 +30,10 @@ struct ImageInfo {
 /// Returns an error if storage operations fail.
 pub async fn run(args: &ImagesArgs) -> Result<()> {
     let storage = get_local_storage()?;
-    let refs = storage.list_references().await.context("Failed to list references")?;
+    let refs = storage
+        .list_references()
+        .await
+        .context("Failed to list references")?;
 
     if refs.is_empty() {
         match args.format {

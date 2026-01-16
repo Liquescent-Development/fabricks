@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use fabricks_common::Fabrickfile;
 use fabricks_oci::LocalStorage;
 use tracing::debug;
@@ -265,8 +265,8 @@ fn create_minimal_fabrickfile(name: &str) -> Fabrickfile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabricks_common::models::capability::{FilesystemCapabilities, NetworkCapabilities};
     use fabricks_common::Capabilities;
+    use fabricks_common::models::capability::{FilesystemCapabilities, NetworkCapabilities};
     use tempfile::TempDir;
 
     fn test_fabrickfile() -> Fabrickfile {
@@ -352,7 +352,12 @@ mod tests {
     fn test_load_module_sync_registry_ref() {
         let result = load_module_sync("ghcr.io/user/module:latest");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not yet supported"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not yet supported")
+        );
     }
 
     #[test]

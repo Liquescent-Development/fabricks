@@ -4,7 +4,7 @@
 
 use std::io::{self, Read};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use tracing::info;
 
 use crate::cli::LoginArgs;
@@ -36,8 +36,7 @@ pub fn run(args: &LoginArgs) -> Result<()> {
     } else if let Some(ref p) = args.password {
         p.clone()
     } else {
-        rpassword::prompt_password("Password: ")
-            .context("Failed to read password")?
+        rpassword::prompt_password("Password: ").context("Failed to read password")?
     };
 
     if password.is_empty() {
