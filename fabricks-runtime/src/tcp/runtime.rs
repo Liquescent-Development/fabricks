@@ -12,13 +12,14 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tracing::{debug, error, info};
 use wasmtime::component::{Component, Linker};
-use wasmtime::{Config, Engine, Store};
+use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::pipe::{AsyncReadStream, AsyncWriteStream};
 use wasmtime_wasi::{AsyncStdinStream, AsyncStdoutStream, WasiCtx, WasiCtxBuilder, WasiView};
 
 use fabricks_common::Capabilities;
 
 use crate::error::{Result, RuntimeError};
+use crate::limits::ResourceLimits;
 use crate::runtime::VolumeMountConfig;
 
 /// Configuration for the TCP runtime.
@@ -38,6 +39,9 @@ pub struct TcpRuntimeConfig {
 
     /// Volume mounts for persistent storage.
     pub volume_mounts: Vec<VolumeMountConfig>,
+
+    /// Resource limits (memory, table size).
+    pub resource_limits: Option<ResourceLimits>,
 }
 
 /// State for TCP WASM execution.
@@ -47,6 +51,9 @@ struct TcpWasiState {
 
     /// Resource table for WASI.
     table: wasmtime::component::ResourceTable,
+
+    /// Store limits for memory and table.
+    limits: StoreLimits,
 }
 
 impl WasiView for TcpWasiState {
@@ -182,12 +189,19 @@ impl TcpRuntime {
 
         // Create WASI context with streams connected
         let wasi_ctx = self.build_wasi_context_with_streams(stdin, stdout)?;
+        let store_limits = self.build_store_limits();
         let state = TcpWasiState {
             wasi_ctx,
             table: wasmtime::component::ResourceTable::new(),
+            limits: store_limits,
         };
 
         let mut store = Store::new(&self.engine, state);
+
+        // Apply the limiter if resource limits are configured
+        if self.config.resource_limits.is_some() {
+            store.limiter(|state| &mut state.limits);
+        }
 
         // Set fuel limit if configured
         if let Some(fuel) = self.config.fuel_limit {
@@ -383,6 +397,19 @@ impl TcpRuntime {
         }
 
         Ok(())
+    }
+
+    /// Build store limits from resource limits configuration.
+    fn build_store_limits(&self) -> StoreLimits {
+        let mut builder = StoreLimitsBuilder::new();
+
+        if let Some(ref limits) = self.config.resource_limits {
+            builder = builder
+                .memory_size(limits.max_memory_bytes)
+                .table_elements(limits.max_table_elements);
+        }
+
+        builder.build()
     }
 
     /// Get the capabilities this runtime was configured with.

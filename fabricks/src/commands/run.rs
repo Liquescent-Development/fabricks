@@ -127,6 +127,7 @@ async fn run_locally(args: &RunArgs) -> Result<()> {
         fuel_limit: None,
         epoch_interruption: false,
         volume_mounts: Vec::new(),
+        resource_limits: None,
     };
 
     // Create and run the runtime

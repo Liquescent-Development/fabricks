@@ -288,6 +288,7 @@ impl ServiceHandle {
             fuel_limit: None,
             epoch_interruption: false,
             volume_mounts,
+            resource_limits: None,
         };
 
         let runtime =
@@ -337,6 +338,7 @@ impl ServiceHandle {
             fuel_limit: None,
             connection_timeout: None,
             volume_mounts,
+            resource_limits: None,
         };
 
         let runtime =

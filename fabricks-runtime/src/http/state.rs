@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use wasmtime::component::ResourceTable;
+use wasmtime::StoreLimits;
 use wasmtime_wasi::{WasiCtx, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
@@ -56,6 +57,9 @@ pub struct WasiHttpState {
     /// Handler for validating outbound HTTP requests.
     #[allow(dead_code)]
     outbound_handler: Arc<dyn OutboundHandler>,
+
+    /// Store limits for memory and table.
+    pub(crate) limits: StoreLimits,
 }
 
 impl WasiHttpState {
@@ -65,20 +69,26 @@ impl WasiHttpState {
     ///
     /// * `wasi_ctx` - The standard WASI context
     /// * `outbound_handler` - Handler for validating outbound requests
+    /// * `limits` - Store limits for resource enforcement
     #[must_use]
-    pub fn new(wasi_ctx: WasiCtx, outbound_handler: Arc<dyn OutboundHandler>) -> Self {
+    pub fn new(
+        wasi_ctx: WasiCtx,
+        outbound_handler: Arc<dyn OutboundHandler>,
+        limits: StoreLimits,
+    ) -> Self {
         Self {
             wasi_ctx,
             http_ctx: WasiHttpCtx::new(),
             table: ResourceTable::new(),
             outbound_handler,
+            limits,
         }
     }
 
-    /// Creates a new WASI HTTP state with deny-all outbound policy.
+    /// Creates a new WASI HTTP state with deny-all outbound policy and default limits.
     #[must_use]
     pub fn new_deny_outbound(wasi_ctx: WasiCtx) -> Self {
-        Self::new(wasi_ctx, Arc::new(DenyAllOutbound))
+        Self::new(wasi_ctx, Arc::new(DenyAllOutbound), StoreLimits::default())
     }
 }
 

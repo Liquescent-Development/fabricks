@@ -15,6 +15,7 @@
 //! - [`network`] - Network isolation and service discovery
 //! - [`volume`] - Persistent volume management
 //! - [`proxy`] - HTTP proxy for routing to WASM services
+//! - [`scaler`] - Metrics collection and auto-scaling
 //! - [`shutdown`] - Graceful shutdown coordination
 
 pub mod api;
@@ -24,6 +25,7 @@ pub mod events;
 pub mod health;
 pub mod network;
 pub mod proxy;
+pub mod scaler;
 pub mod service;
 pub mod shutdown;
 pub mod state;
@@ -37,6 +39,7 @@ pub use events::{Event, EventBus, EventType};
 pub use health::{HealthMonitor, HealthMonitorConfig, HealthStatus, ServiceHealth};
 pub use network::{NetworkConfig, NetworkManager, ServiceRegistry};
 pub use proxy::{EgressProxy, EgressRequest, EgressResponse, ProxyServer, ServiceRouter};
+pub use scaler::{AutoScaler, AutoScalerConfig, MetricsCollector, MetricsCollectorConfig, ServiceMetrics};
 pub use service::{ServiceConfig, ServiceInfo, ServiceManager};
 pub use state::AppState;
 pub use store::StateStore;

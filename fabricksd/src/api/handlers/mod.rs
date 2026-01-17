@@ -2,6 +2,7 @@
 
 pub mod daemon;
 pub mod health;
+pub mod metrics;
 pub mod mortar;
 pub mod networks;
 pub mod services;

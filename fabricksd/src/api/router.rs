@@ -89,6 +89,12 @@ pub fn build_router(state: AppState) -> Router {
             "/v1/proxy/bindings",
             get(handlers::health::get_proxy_bindings),
         )
+        // Metrics
+        .route("/v1/metrics", get(handlers::metrics::get_all_metrics))
+        .route(
+            "/v1/services/{id}/metrics",
+            get(handlers::metrics::get_service_metrics),
+        )
         // Add state
         .with_state(state)
         // Add tracing layer for request/response logging
