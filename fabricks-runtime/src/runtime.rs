@@ -9,10 +9,11 @@ use std::sync::Arc;
 use fabricks_common::Capabilities;
 use tracing::{debug, info};
 use wasmtime::component::{Component, Linker, ResourceTable};
-use wasmtime::{Config, Engine, Store};
+use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiView};
 
 use crate::error::{Result, RuntimeError};
+use crate::limits::ResourceLimits;
 
 /// Volume mount configuration for the runtime.
 ///
@@ -72,6 +73,9 @@ pub struct RuntimeConfig {
 
     /// Volume mounts for persistent storage.
     pub volume_mounts: Vec<VolumeMountConfig>,
+
+    /// Resource limits (memory, table size).
+    pub resource_limits: Option<ResourceLimits>,
 }
 
 impl Default for RuntimeConfig {
@@ -84,6 +88,7 @@ impl Default for RuntimeConfig {
             fuel_limit: None,
             epoch_interruption: false,
             volume_mounts: Vec::new(),
+            resource_limits: None,
         }
     }
 }
@@ -94,14 +99,17 @@ pub struct WasiState {
     ctx: WasiCtx,
     /// Resource table for WASI resources.
     table: ResourceTable,
+    /// Store limits for memory and table.
+    limits: StoreLimits,
 }
 
 impl WasiState {
     /// Create a new WASI state with the given context.
-    fn new(ctx: WasiCtx) -> Self {
+    fn new(ctx: WasiCtx, limits: StoreLimits) -> Self {
         Self {
             ctx,
             table: ResourceTable::new(),
+            limits,
         }
     }
 }
@@ -247,8 +255,16 @@ impl Runtime {
     /// Create a new store with WASI state configured per capabilities.
     fn create_store(&self) -> Result<Store<WasiState>> {
         let wasi_ctx = self.build_wasi_context()?;
-        let state = WasiState::new(wasi_ctx);
+
+        // Build store limits from resource_limits configuration
+        let store_limits = self.build_store_limits();
+        let state = WasiState::new(wasi_ctx, store_limits);
         let mut store = Store::new(&self.engine, state);
+
+        // Apply the limiter if resource limits are configured
+        if self.config.resource_limits.is_some() {
+            store.limiter(|state| &mut state.limits);
+        }
 
         // Set fuel limit if configured
         if let Some(fuel) = self.config.fuel_limit {
@@ -260,6 +276,19 @@ impl Runtime {
         }
 
         Ok(store)
+    }
+
+    /// Build store limits from resource limits configuration.
+    fn build_store_limits(&self) -> StoreLimits {
+        let mut builder = StoreLimitsBuilder::new();
+
+        if let Some(ref limits) = self.config.resource_limits {
+            builder = builder
+                .memory_size(limits.max_memory_bytes)
+                .table_elements(limits.max_table_elements);
+        }
+
+        builder.build()
     }
 
     /// Create a linker for the component.

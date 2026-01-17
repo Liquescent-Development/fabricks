@@ -9,7 +9,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use tracing::{debug, info};
 use wasmtime::component::{Component, Linker};
-use wasmtime::{Config, Engine, Store};
+use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::WasiCtxBuilder;
 use wasmtime_wasi_http::bindings::Proxy;
 use wasmtime_wasi_http::bindings::http::types::Scheme as WasiScheme;
@@ -20,6 +20,7 @@ use fabricks_common::Capabilities;
 use super::state::{OutboundHandler, WasiHttpState};
 use super::types::{HttpRequest, HttpResponse, Scheme};
 use crate::error::{Result, RuntimeError};
+use crate::limits::ResourceLimits;
 use crate::runtime::VolumeMountConfig;
 
 /// Configuration for the HTTP runtime.
@@ -39,6 +40,9 @@ pub struct HttpRuntimeConfig {
 
     /// Volume mounts for persistent storage.
     pub volume_mounts: Vec<VolumeMountConfig>,
+
+    /// Resource limits (memory, table size).
+    pub resource_limits: Option<ResourceLimits>,
 }
 
 /// HTTP runtime for WASM components implementing `wasi:http/incoming-handler`.
@@ -306,8 +310,14 @@ impl HttpRuntime {
         outbound_handler: Arc<dyn OutboundHandler>,
     ) -> Result<Store<WasiHttpState>> {
         let wasi_ctx = self.build_wasi_context()?;
-        let state = WasiHttpState::new(wasi_ctx, outbound_handler);
+        let store_limits = self.build_store_limits();
+        let state = WasiHttpState::new(wasi_ctx, outbound_handler, store_limits);
         let mut store = Store::new(&self.engine, state);
+
+        // Apply the limiter if resource limits are configured
+        if self.config.resource_limits.is_some() {
+            store.limiter(|state| &mut state.limits);
+        }
 
         // Set fuel limit if configured
         if let Some(fuel) = self.config.fuel_limit {
@@ -319,6 +329,19 @@ impl HttpRuntime {
         }
 
         Ok(store)
+    }
+
+    /// Build store limits from resource limits configuration.
+    fn build_store_limits(&self) -> StoreLimits {
+        let mut builder = StoreLimitsBuilder::new();
+
+        if let Some(ref limits) = self.config.resource_limits {
+            builder = builder
+                .memory_size(limits.max_memory_bytes)
+                .table_elements(limits.max_table_elements);
+        }
+
+        builder.build()
     }
 
     /// Build WASI context with capability-based restrictions.

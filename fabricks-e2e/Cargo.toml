@@ -35,3 +35,11 @@ path = "tests/daemon_api.rs"
 [[test]]
 name = "http_service"
 path = "tests/http_service.rs"
+
+[[test]]
+name = "volume_service"
+path = "tests/volume_service.rs"
+
+[[test]]
+name = "autoscaler"
+path = "tests/autoscaler.rs"

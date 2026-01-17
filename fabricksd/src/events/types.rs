@@ -25,8 +25,10 @@ pub enum EventType {
     ServiceStopped,
     /// A service failed.
     ServiceFailed,
-    /// A service was scaled.
+    /// A service was scaled (manually).
     ServiceScaled,
+    /// A service was auto-scaled.
+    ServiceAutoScaled,
     /// A service was deleted.
     ServiceDeleted,
 
@@ -85,6 +87,25 @@ impl Event {
             timestamp: Utc::now(),
             data: serde_json::Value::Null,
         }
+    }
+
+    /// Creates an auto-scaled event.
+    #[must_use]
+    pub fn auto_scaled(
+        service_id: &str,
+        from_replicas: usize,
+        to_replicas: usize,
+        reason: &str,
+    ) -> Self {
+        Self::new(
+            EventType::ServiceAutoScaled,
+            serde_json::json!({
+                "service_id": service_id,
+                "from_replicas": from_replicas,
+                "to_replicas": to_replicas,
+                "reason": reason
+            }),
+        )
     }
 }
 

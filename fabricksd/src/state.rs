@@ -14,6 +14,7 @@ use crate::events::EventBus;
 use crate::health::{HealthMonitor, HealthMonitorConfig};
 use crate::network::{NetworkManager, ServiceRegistry};
 use crate::proxy::{EgressProxy, ProxyServer, RequestHandler, ServiceRouter, TcpConnectionHandler};
+use crate::scaler::{AutoScaler, AutoScalerConfig, MetricsCollector, MetricsCollectorConfig};
 use crate::service::ServiceManager;
 use crate::store::StateStore;
 use crate::volume::VolumeManager;
@@ -59,6 +60,12 @@ pub struct AppState {
 
     /// Volume manager for persistent storage.
     pub volume_manager: Arc<VolumeManager>,
+
+    /// Metrics collector for tracking service metrics.
+    pub metrics_collector: Arc<MetricsCollector>,
+
+    /// Auto-scaler for automatic scaling based on metrics.
+    pub auto_scaler: Arc<AutoScaler>,
 
     /// Shutdown signal sender.
     shutdown_tx: broadcast::Sender<()>,
@@ -132,6 +139,19 @@ impl AppState {
         )?;
         let service_manager = Arc::new(RwLock::new(service_manager));
 
+        // Create metrics collector
+        let metrics_collector_config = MetricsCollectorConfig::default();
+        let metrics_collector = Arc::new(MetricsCollector::new(metrics_collector_config));
+
+        // Create auto-scaler
+        let auto_scaler_config = AutoScalerConfig::default();
+        let auto_scaler = Arc::new(AutoScaler::new(
+            auto_scaler_config,
+            Arc::clone(&service_manager),
+            Arc::clone(&metrics_collector),
+            Arc::clone(&event_bus),
+        ));
+
         // Create shutdown channel
         let (shutdown_tx, _) = broadcast::channel(1);
 
@@ -148,6 +168,8 @@ impl AppState {
             egress_proxy,
             health_monitor,
             volume_manager,
+            metrics_collector,
+            auto_scaler,
             shutdown_tx,
         })
     }
@@ -262,6 +284,11 @@ mod tests {
         assert!(Arc::ptr_eq(&state.egress_proxy, &cloned.egress_proxy));
         assert!(Arc::ptr_eq(&state.health_monitor, &cloned.health_monitor));
         assert!(Arc::ptr_eq(&state.volume_manager, &cloned.volume_manager));
+        assert!(Arc::ptr_eq(
+            &state.metrics_collector,
+            &cloned.metrics_collector
+        ));
+        assert!(Arc::ptr_eq(&state.auto_scaler, &cloned.auto_scaler));
     }
 
     #[tokio::test]
