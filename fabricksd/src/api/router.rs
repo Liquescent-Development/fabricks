@@ -95,6 +95,12 @@ pub fn build_router(state: AppState) -> Router {
             "/v1/services/{id}/metrics",
             get(handlers::metrics::get_service_metrics),
         )
+        // Policies
+        .route("/v1/policies", get(handlers::policies::list_policies))
+        .route(
+            "/v1/policies/{mortar_id}",
+            get(handlers::policies::get_policy),
+        )
         // Add state
         .with_state(state)
         // Add tracing layer for request/response logging

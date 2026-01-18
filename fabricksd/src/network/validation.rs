@@ -4,13 +4,15 @@
 //! 1. Ingress (external to service): Network access mode (`external` vs `internal`)
 //! 2. Egress capabilities (can the service connect to this target?)
 //! 3. Network membership (do both services share a network?)
-//! 4. Policy rules (future: additional access control policies)
+//! 4. Policy rules (deny, require, warn rules from mortar policies)
 
 use std::sync::Arc;
 
 use tracing::debug;
 
 use fabricks_common::models::capability::Capabilities;
+
+use crate::policy::{PolicyDecision, PolicyManager};
 
 use super::manager::NetworkManager;
 
@@ -69,7 +71,7 @@ impl ConnectionDecision {
 /// Checks in order:
 /// 1. Does the service's capabilities allow connecting to this target?
 /// 2. If internal: do both services share a network?
-/// 3. Additional policy rules (future)
+/// 3. Policy rules from mortar configuration
 ///
 /// # Arguments
 ///
@@ -78,6 +80,7 @@ impl ConnectionDecision {
 /// * `target_host` - The target hostname (may include port)
 /// * `target_port` - The target port number
 /// * `network_manager` - The network manager for service resolution
+/// * `policy_manager` - Optional policy manager for policy evaluation
 ///
 /// # Returns
 ///
@@ -88,6 +91,7 @@ pub async fn validate_connection(
     target_host: &str,
     target_port: u16,
     network_manager: &Arc<NetworkManager>,
+    policy_manager: Option<&PolicyManager>,
 ) -> ConnectionDecision {
     // Step 1: Check capability grant
     let target_with_port = format!("{target_host}:{target_port}");
@@ -119,12 +123,45 @@ pub async fn validate_connection(
             };
         }
 
+        // Step 3: Check policies for internal connections
+        if let Some(pm) = policy_manager {
+            let decision = pm
+                .evaluate_connection(from_service_id, &target_service_id)
+                .await;
+
+            match decision {
+                PolicyDecision::Deny { reason, .. } => {
+                    return ConnectionDecision::DenyPolicy { reason };
+                }
+                PolicyDecision::Warn { .. } => {
+                    // Warning already logged by engine, continue to allow
+                }
+                PolicyDecision::Allow => {}
+            }
+        }
+
         return ConnectionDecision::AllowInternal {
             service_id: target_service_id,
         };
     }
 
-    // Step 3: External connection - already validated by capability
+    // Step 4: External connection - check policies
+    if let Some(pm) = policy_manager {
+        let decision = pm
+            .evaluate_connection(from_service_id, &target_with_port)
+            .await;
+
+        match decision {
+            PolicyDecision::Deny { reason, .. } => {
+                return ConnectionDecision::DenyPolicy { reason };
+            }
+            PolicyDecision::Warn { .. } => {
+                // Warning already logged by engine, continue to allow
+            }
+            PolicyDecision::Allow => {}
+        }
+    }
+
     debug!(
         from = %from_service_id,
         host = %target_host,
@@ -272,7 +309,8 @@ mod tests {
     async fn test_deny_no_capability() {
         let manager = create_test_network_manager();
 
-        let decision = validate_connection("svc-1", &None, "api.example.com", 443, &manager).await;
+        let decision =
+            validate_connection("svc-1", &None, "api.example.com", 443, &manager, None).await;
 
         assert!(matches!(
             decision,
@@ -286,7 +324,8 @@ mod tests {
         let manager = create_test_network_manager();
         let cap = capabilities_for_connect(vec!["other.example.com:443"]);
 
-        let decision = validate_connection("svc-1", &cap, "api.example.com", 443, &manager).await;
+        let decision =
+            validate_connection("svc-1", &cap, "api.example.com", 443, &manager, None).await;
 
         assert!(matches!(
             decision,
@@ -299,7 +338,8 @@ mod tests {
         let manager = create_test_network_manager();
         let cap = capabilities_for_connect(vec!["api.example.com:443"]);
 
-        let decision = validate_connection("svc-1", &cap, "api.example.com", 443, &manager).await;
+        let decision =
+            validate_connection("svc-1", &cap, "api.example.com", 443, &manager, None).await;
 
         assert_eq!(decision, ConnectionDecision::AllowExternal);
         assert!(decision.is_allowed());
@@ -310,7 +350,8 @@ mod tests {
         let manager = create_test_network_manager();
         let cap = capabilities_allow_all_outbound();
 
-        let decision = validate_connection("svc-1", &cap, "any.host.com", 8080, &manager).await;
+        let decision =
+            validate_connection("svc-1", &cap, "any.host.com", 8080, &manager, None).await;
 
         assert_eq!(decision, ConnectionDecision::AllowExternal);
     }
@@ -338,7 +379,8 @@ mod tests {
 
         let cap = capabilities_for_connect(vec!["service-b:8080"]);
 
-        let decision = validate_connection("svc-a", &cap, "service-b", 8080, &manager).await;
+        let decision =
+            validate_connection("svc-a", &cap, "service-b", 8080, &manager, None).await;
 
         assert!(matches!(decision, ConnectionDecision::DenyNetwork { .. }));
     }
@@ -363,7 +405,8 @@ mod tests {
 
         let cap = capabilities_for_connect(vec!["service-b:8080"]);
 
-        let decision = validate_connection("svc-a", &cap, "service-b", 8080, &manager).await;
+        let decision =
+            validate_connection("svc-a", &cap, "service-b", 8080, &manager, None).await;
 
         match decision {
             ConnectionDecision::AllowInternal { service_id } => {
