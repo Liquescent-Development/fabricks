@@ -13,6 +13,7 @@ use crate::error::Result;
 use crate::events::EventBus;
 use crate::health::{HealthMonitor, HealthMonitorConfig};
 use crate::network::{NetworkManager, ServiceRegistry};
+use crate::policy::PolicyManager;
 use crate::proxy::{EgressProxy, ProxyServer, RequestHandler, ServiceRouter, TcpConnectionHandler};
 use crate::scaler::{AutoScaler, AutoScalerConfig, MetricsCollector, MetricsCollectorConfig};
 use crate::service::ServiceManager;
@@ -67,6 +68,9 @@ pub struct AppState {
     /// Auto-scaler for automatic scaling based on metrics.
     pub auto_scaler: Arc<AutoScaler>,
 
+    /// Policy manager for security policies.
+    pub policy_manager: Arc<PolicyManager>,
+
     /// Shutdown signal sender.
     shutdown_tx: broadcast::Sender<()>,
 }
@@ -117,8 +121,14 @@ impl AppState {
             Arc::clone(&network_manager),
         ));
 
-        // Create egress proxy for outbound requests
-        let egress_proxy = Arc::new(EgressProxy::new(Arc::clone(&network_manager))?);
+        // Create policy manager (needed by egress proxy)
+        let policy_manager = Arc::new(PolicyManager::new(Arc::clone(&event_bus)));
+
+        // Create egress proxy for outbound requests with policy manager
+        let egress_proxy = Arc::new(EgressProxy::with_policy_manager(
+            Arc::clone(&network_manager),
+            Some(Arc::clone(&policy_manager)),
+        )?);
 
         // Create health monitor
         let health_monitor_config = HealthMonitorConfig::default();
@@ -170,6 +180,7 @@ impl AppState {
             volume_manager,
             metrics_collector,
             auto_scaler,
+            policy_manager,
             shutdown_tx,
         })
     }
@@ -289,6 +300,7 @@ mod tests {
             &cloned.metrics_collector
         ));
         assert!(Arc::ptr_eq(&state.auto_scaler, &cloned.auto_scaler));
+        assert!(Arc::ptr_eq(&state.policy_manager, &cloned.policy_manager));
     }
 
     #[tokio::test]

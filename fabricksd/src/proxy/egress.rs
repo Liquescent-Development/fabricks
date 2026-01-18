@@ -21,6 +21,7 @@ use fabricks_common::models::capability::Capabilities;
 
 use crate::error::{DaemonError, Result};
 use crate::network::{ConnectionDecision, NetworkManager, validate_connection};
+use crate::policy::PolicyManager;
 
 /// Request to be executed by the egress proxy.
 #[derive(Debug, Clone)]
@@ -206,6 +207,8 @@ pub struct EgressProxy {
     client: Client,
     /// Network manager for connection validation.
     network_manager: Arc<NetworkManager>,
+    /// Policy manager for policy evaluation.
+    policy_manager: Option<Arc<PolicyManager>>,
     /// Handler for routing to internal services.
     internal_route_handler: Option<InternalRouteHandler>,
 }
@@ -217,6 +220,18 @@ impl EgressProxy {
     ///
     /// Returns an error if the HTTP client cannot be created.
     pub fn new(network_manager: Arc<NetworkManager>) -> Result<Self> {
+        Self::with_policy_manager(network_manager, None)
+    }
+
+    /// Creates a new egress proxy with an optional policy manager.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP client cannot be created.
+    pub fn with_policy_manager(
+        network_manager: Arc<NetworkManager>,
+        policy_manager: Option<Arc<PolicyManager>>,
+    ) -> Result<Self> {
         let client = Client::builder()
             .build()
             .map_err(|e| DaemonError::IoError(std::io::Error::other(e.to_string())))?;
@@ -224,6 +239,7 @@ impl EgressProxy {
         Ok(Self {
             client,
             network_manager,
+            policy_manager,
             internal_route_handler: None,
         })
     }
@@ -268,12 +284,14 @@ impl EgressProxy {
         );
 
         // Validate the connection
+        let policy_mgr = self.policy_manager.as_ref().map(Arc::as_ref);
         let decision = validate_connection(
             from_service_id,
             capabilities,
             &host,
             port,
             &self.network_manager,
+            policy_mgr,
         )
         .await;
 
@@ -340,12 +358,14 @@ impl EgressProxy {
         );
 
         // Validate the connection
+        let policy_mgr = self.policy_manager.as_ref().map(Arc::as_ref);
         let decision = validate_connection(
             from_service_id,
             capabilities,
             &request.host,
             request.port,
             &self.network_manager,
+            policy_mgr,
         )
         .await;
 
@@ -549,6 +569,7 @@ impl std::fmt::Debug for EgressProxy {
                 "has_internal_handler",
                 &self.internal_route_handler.is_some(),
             )
+            .field("has_policy_manager", &self.policy_manager.is_some())
             .finish_non_exhaustive()
     }
 }

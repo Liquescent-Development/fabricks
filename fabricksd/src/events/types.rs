@@ -47,6 +47,12 @@ pub enum EventType {
     VolumeCreated,
     /// A volume was deleted.
     VolumeDeleted,
+
+    // Policy events
+    /// A policy was evaluated for a connection.
+    PolicyEvaluated,
+    /// A policy violation occurred (connection denied).
+    PolicyViolation,
 }
 
 /// A daemon event.

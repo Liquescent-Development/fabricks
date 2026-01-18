@@ -43,3 +43,7 @@ path = "tests/volume_service.rs"
 [[test]]
 name = "autoscaler"
 path = "tests/autoscaler.rs"
+
+[[test]]
+name = "policy"
+path = "tests/policy.rs"
