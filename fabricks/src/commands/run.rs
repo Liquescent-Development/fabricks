@@ -131,11 +131,17 @@ async fn run_locally(args: &RunArgs) -> Result<()> {
     };
 
     // Create and run the runtime
-    let runtime = Runtime::new(&wasm_bytes, config).context("Failed to create WASM runtime")?;
+    // Note: The WASI runtime uses synchronous bindings internally, so we need to
+    // run it in a blocking task to avoid conflicts with the async tokio runtime.
+    let module_name = fabrickfile.info.name.clone();
+    writeln_stderr(&format!("Running {}...", module_name))?;
 
-    writeln_stderr(&format!("Running {}...", fabrickfile.info.name))?;
-
-    runtime.run().context("Module execution failed")?;
+    tokio::task::spawn_blocking(move || {
+        let runtime = Runtime::new(&wasm_bytes, config).context("Failed to create WASM runtime")?;
+        runtime.run().context("Module execution failed")
+    })
+    .await
+    .context("Runtime task panicked")??;
 
     info!("Module execution completed");
     Ok(())

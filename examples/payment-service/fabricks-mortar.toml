@@ -65,12 +65,10 @@ egress = ["external:payment-gateways"]
 
 [service.payment-gateway]
 build = "./services/payment-gateway"
+type = "http"
 networks = ["payment-bridge", "payment"]
 
-environment = {
-    LOG_LEVEL = "info",
-    PROCESSOR_ENDPOINT = "http://payment-processor:9000"
-}
+environment = { LOG_LEVEL = "info", PROCESSOR_ENDPOINT = "http://payment-processor:9000" }
 
 [service.payment-gateway.replicas]
 min = 2
@@ -95,13 +93,10 @@ tls_required = true
 
 [service.payment-processor]
 build = "./services/payment-processor"
+type = "http"
 networks = ["payment"]
 
-environment = {
-    STRIPE_API_KEY = "${secret.stripe_api_key}",
-    STRIPE_WEBHOOK_SECRET = "${secret.stripe_webhook_secret}",
-    LOG_LEVEL = "info"
-}
+environment = { STRIPE_API_KEY = "${secret.stripe_api_key}", STRIPE_WEBHOOK_SECRET = "${secret.stripe_webhook_secret}", LOG_LEVEL = "info" }
 
 # Fixed replicas - no autoscaling in PCI zone
 [service.payment-processor.replicas]

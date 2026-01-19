@@ -17,7 +17,7 @@ command = "cargo component build --release"
 output = "target/wasm32-wasip1/release/hello_http.wasm"
 
 [capabilities.network]
-listen = [8080]
+listen = [8888]
 
 [health_check.http]
 path = "/health"

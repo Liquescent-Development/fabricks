@@ -41,12 +41,11 @@ ingress = ["dmz"]
 
 [service.api-gateway]
 build = "./services/api-gateway"
+type = "http"
 networks = ["dmz", "application"]
-ports = ["8080:8080"]
+ports = ["8085:8085"]
 
-environment = {
-    LOG_LEVEL = "${variable.log_level}"
-}
+environment = { LOG_LEVEL = "${variable.log_level}" }
 
 [service.api-gateway.replicas]
 min = 1
@@ -67,11 +66,10 @@ interval = "10s"
 
 [service.product]
 build = "./services/product"
+type = "http"
 networks = ["application"]
 
-environment = {
-    LOG_LEVEL = "${variable.log_level}"
-}
+environment = { LOG_LEVEL = "${variable.log_level}" }
 
 [service.product.replicas]
 min = 1
@@ -93,11 +91,10 @@ interval = "30s"
 
 [service.cart]
 build = "./services/cart"
+type = "http"
 networks = ["application"]
 
-environment = {
-    LOG_LEVEL = "${variable.log_level}"
-}
+environment = { LOG_LEVEL = "${variable.log_level}" }
 
 [service.cart.replicas]
 min = 1
@@ -119,11 +116,10 @@ interval = "30s"
 
 [service.order]
 build = "./services/order"
+type = "http"
 networks = ["application"]
 
-environment = {
-    LOG_LEVEL = "${variable.log_level}"
-}
+environment = { LOG_LEVEL = "${variable.log_level}" }
 
 [service.order.replicas]
 min = 1
@@ -145,11 +141,10 @@ interval = "30s"
 
 [service.user]
 build = "./services/user"
+type = "http"
 networks = ["application"]
 
-environment = {
-    LOG_LEVEL = "${variable.log_level}"
-}
+environment = { LOG_LEVEL = "${variable.log_level}" }
 
 [service.user.replicas]
 min = 1

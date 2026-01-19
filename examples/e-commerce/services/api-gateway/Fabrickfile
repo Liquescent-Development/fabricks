@@ -20,9 +20,9 @@ command = "cargo component build --release"
 output = "target/wasm32-wasip1/release/api_gateway.wasm"
 
 [capabilities.network]
-listen = [8080]
+listen = [8085]
 
 [health_check.http]
 path = "/health"
-port = 8080
+port = 8085
 interval = "10s"

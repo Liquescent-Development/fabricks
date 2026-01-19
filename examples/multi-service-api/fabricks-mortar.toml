@@ -35,12 +35,11 @@ ingress = "0.0.0.0/0"
 
 [service.api]
 build = "./services/api"
+type = "http"
 networks = ["public"]
 ports = ["8080:8080"]
 
-environment = {
-    LOG_LEVEL = "${variable.log_level}"
-}
+environment = { LOG_LEVEL = "${variable.log_level}" }
 
 [service.api.resources]
 memory = "256Mi"
