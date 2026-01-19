@@ -15,10 +15,8 @@ source = "rust"
 path = "."
 
 [build]
-command = "cargo build --target wasm32-wasi --release"
-output = "target/wasm32-wasi/release/payment_gateway.wasm"
-
-exports = ["process_payment", "refund_payment", "get_payment_status"]
+command = "cargo component build --release"
+output = "target/wasm32-wasip1/release/payment_gateway.wasm"
 
 [capabilities]
 env = ["LOG_LEVEL", "PROCESSOR_ENDPOINT"]

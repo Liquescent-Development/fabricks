@@ -6,6 +6,7 @@ fabrick_version = "1.0"
 [info]
 name = "product"
 version = "1.0.0"
+type = "http"
 description = "Product catalog service"
 
 [from]
@@ -15,23 +16,13 @@ source = "rust"
 path = "."
 
 [build]
-command = "cargo build --target wasm32-wasi --release"
-output = "target/wasm32-wasi/release/product.wasm"
-
-exports = ["list_products", "get_product", "search_products"]
-
-[capabilities]
-env = ["DATABASE_URL", "REDIS_URL", "LOG_LEVEL"]
+command = "cargo component build --release"
+output = "target/wasm32-wasip1/release/product.wasm"
 
 [capabilities.network]
 listen = [8081]
-connect = ["postgres:5432", "redis:6379"]
 
 [health_check.http]
 path = "/health"
 port = 8081
 interval = "30s"
-
-[config.resources]
-memory = "256Mi"
-cpu = 0.5

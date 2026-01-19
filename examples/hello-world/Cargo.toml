@@ -1,8 +1,27 @@
 [package]
 name = "hello-world"
-version = "1.0.0"
-edition = "2021"
+version = "0.1.0"
+edition = "2024"
 
+# Not part of the main workspace
 [workspace]
 
 [dependencies]
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"] }
+
+# Override workspace lints - wit-bindgen generates unsafe code
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "allow"
+
+[lints.clippy]
+pedantic = "allow"
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.component]
+package = "component:hello-world"
+
+[package.metadata.component.target.dependencies]
+"wasi:cli" = "0.2.9"

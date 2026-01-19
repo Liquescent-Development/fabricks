@@ -1,11 +1,12 @@
 # User Service
-# User management and authentication
+# User management
 
 fabrick_version = "1.0"
 
 [info]
 name = "user"
 version = "1.0.0"
+type = "http"
 description = "User management service"
 
 [from]
@@ -15,23 +16,13 @@ source = "rust"
 path = "."
 
 [build]
-command = "cargo build --target wasm32-wasi --release"
-output = "target/wasm32-wasi/release/user.wasm"
-
-exports = ["get_user", "create_user", "authenticate", "update_profile"]
-
-[capabilities]
-env = ["DATABASE_URL", "LOG_LEVEL"]
+command = "cargo component build --release"
+output = "target/wasm32-wasip1/release/user.wasm"
 
 [capabilities.network]
 listen = [8084]
-connect = ["postgres:5432"]
 
 [health_check.http]
 path = "/health"
 port = 8084
 interval = "30s"
-
-[config.resources]
-memory = "256Mi"
-cpu = 0.5

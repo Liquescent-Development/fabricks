@@ -1,0 +1,5 @@
+package component:product;
+
+world product {
+    include wasi:http/proxy@0.2.9;
+}

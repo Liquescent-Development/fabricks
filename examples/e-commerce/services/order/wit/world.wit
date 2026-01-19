@@ -1,0 +1,5 @@
+package component:order;
+
+world order {
+    include wasi:http/proxy@0.2.9;
+}

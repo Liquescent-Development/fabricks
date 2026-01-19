@@ -9,18 +9,20 @@ version = "1.0.0"
 description = "PCI-DSS compliant payment processing"
 
 # =============================================================================
-# Secrets (from Vault)
+# Secrets (Environment Variables for Demo)
 # =============================================================================
+# In production, use Vault or another secrets provider.
+# For this demo, we use environment variables.
 
 [secret.stripe_api_key]
-provider = "vault"
-path = "secret/data/stripe"
-key = "api_key"
+provider = "env"
+key = "STRIPE_API_KEY"
+default = "sk_test_demo_key_for_fabricks_example"
 
 [secret.stripe_webhook_secret]
-provider = "vault"
-path = "secret/data/stripe"
-key = "webhook_secret"
+provider = "env"
+key = "STRIPE_WEBHOOK_SECRET"
+default = "whsec_demo_secret_for_fabricks_example"
 
 # =============================================================================
 # External Hosts (Whitelist)

@@ -1,12 +1,16 @@
 # Multi-Service API Example
-# A REST API with PostgreSQL database
+# Demonstrates a REST API with network segmentation
+#
+# NOTE: This example uses in-memory storage for simplicity.
+# The architecture demonstrates how you would structure a real
+# application with separate API and data tiers.
 
 mortar_version = "1.0"
 
 [project]
 name = "multi-service-api"
 version = "1.0.0"
-description = "REST API with PostgreSQL database"
+description = "REST API demonstrating multi-service architecture"
 
 # =============================================================================
 # Variables
@@ -22,14 +26,8 @@ description = "Log level for services"
 # =============================================================================
 
 [network.public]
-description = "Public-facing API"
+description = "Public-facing API tier"
 ingress = "0.0.0.0/0"
-egress = ["data"]
-
-[network.data]
-description = "Database tier"
-internal = true
-ingress = ["public"]
 
 # =============================================================================
 # Services
@@ -37,12 +35,10 @@ ingress = ["public"]
 
 [service.api]
 build = "./services/api"
-networks = ["public", "data"]
+networks = ["public"]
 ports = ["8080:8080"]
-depends_on = ["postgres"]
 
 environment = {
-    DATABASE_URL = "postgres://app:secret@postgres:5432/api",
     LOG_LEVEL = "${variable.log_level}"
 }
 
@@ -59,44 +55,9 @@ cpu_threshold = 70
 path = "/health"
 interval = "30s"
 
-# -----------------------------------------------------------------------------
-
-[service.postgres]
-image = "wasm://pglite:latest"
-networks = ["data"]
-
-environment = {
-    POSTGRES_DB = "api",
-    POSTGRES_USER = "app",
-    POSTGRES_PASSWORD = "secret"
-}
-
-[service.postgres.volumes]
-postgres_data = "/var/lib/postgresql/data"
-
-[service.postgres.resources]
-memory = "512Mi"
-cpu = 1.0
-
-[service.postgres.replicas]
-min = 1
-max = 1
-
-[service.postgres.health_check.tcp]
-port = 5432
-interval = "10s"
-
-# =============================================================================
-# Volumes
-# =============================================================================
-
-[volume.postgres_data]
-size = "10Gi"
-
 # =============================================================================
 # Validation
 # =============================================================================
 
 [validate]
 require_health_checks = true
-deny_wildcard_connect = true
