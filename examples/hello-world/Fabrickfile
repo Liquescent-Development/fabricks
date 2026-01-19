@@ -1,12 +1,13 @@
 # Hello World Example
-# The simplest possible Fabrickfile - a minimal WASM service
+# The simplest possible Fabrickfile - a minimal CLI service
 
 fabrick_version = "1.0"
 
 [info]
 name = "hello-world"
-version = "1.0.0"
-description = "A minimal Hello World fabrick"
+version = "0.1.0"
+type = "cli"
+description = "The simplest possible Fabricks service - prints a greeting and exits"
 
 [from]
 source = "rust"
@@ -15,12 +16,5 @@ source = "rust"
 path = "."
 
 [build]
-command = "cargo build --target wasm32-wasip2 --release"
-output = "target/wasm32-wasip2/release/hello-world.wasm"
-
-[capabilities.network]
-listen = [8080]
-
-[health_check.http]
-path = "/health"
-interval = "30s"
+command = "cargo component build --release"
+output = "target/wasm32-wasip1/release/hello_world.wasm"

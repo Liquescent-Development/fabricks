@@ -9,18 +9,20 @@ version = "1.0.0"
 description = "PCI-DSS compliant payment processing"
 
 # =============================================================================
-# Secrets (from Vault)
+# Secrets (Environment Variables for Demo)
 # =============================================================================
+# In production, use Vault or another secrets provider.
+# For this demo, we use environment variables.
 
 [secret.stripe_api_key]
-provider = "vault"
-path = "secret/data/stripe"
-key = "api_key"
+provider = "env"
+key = "STRIPE_API_KEY"
+default = "sk_test_demo_key_for_fabricks_example"
 
 [secret.stripe_webhook_secret]
-provider = "vault"
-path = "secret/data/stripe"
-key = "webhook_secret"
+provider = "env"
+key = "STRIPE_WEBHOOK_SECRET"
+default = "whsec_demo_secret_for_fabricks_example"
 
 # =============================================================================
 # External Hosts (Whitelist)
@@ -63,12 +65,10 @@ egress = ["external:payment-gateways"]
 
 [service.payment-gateway]
 build = "./services/payment-gateway"
+type = "http"
 networks = ["payment-bridge", "payment"]
 
-environment = {
-    LOG_LEVEL = "info",
-    PROCESSOR_ENDPOINT = "http://payment-processor:9000"
-}
+environment = { LOG_LEVEL = "info", PROCESSOR_ENDPOINT = "http://payment-processor:9000" }
 
 [service.payment-gateway.replicas]
 min = 2
@@ -93,13 +93,10 @@ tls_required = true
 
 [service.payment-processor]
 build = "./services/payment-processor"
+type = "http"
 networks = ["payment"]
 
-environment = {
-    STRIPE_API_KEY = "${secret.stripe_api_key}",
-    STRIPE_WEBHOOK_SECRET = "${secret.stripe_webhook_secret}",
-    LOG_LEVEL = "info"
-}
+environment = { STRIPE_API_KEY = "${secret.stripe_api_key}", STRIPE_WEBHOOK_SECRET = "${secret.stripe_webhook_secret}", LOG_LEVEL = "info" }
 
 # Fixed replicas - no autoscaling in PCI zone
 [service.payment-processor.replicas]

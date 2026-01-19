@@ -1,0 +1,5 @@
+package component:user;
+
+world user {
+    include wasi:http/proxy@0.2.9;
+}

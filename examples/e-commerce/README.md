@@ -1,6 +1,18 @@
 # E-Commerce Platform Example
 
-A complete microservices e-commerce application demonstrating advanced Fabricks features.
+A complete microservices e-commerce application demonstrating Fabricks patterns.
+
+This example uses in-memory storage for simplicity while demonstrating how you would
+structure a real e-commerce platform with multiple services.
+
+## What This Demonstrates
+
+- Microservices architecture with 5 services
+- API gateway pattern for request routing
+- Multi-tier network segmentation
+- In-memory CRUD operations per service
+- Auto-scaling configuration
+- Health checks for each service
 
 ## Structure
 
@@ -8,49 +20,88 @@ A complete microservices e-commerce application demonstrating advanced Fabricks 
 e-commerce/
 ├── fabricks-mortar.toml      # Multi-service composition
 ├── services/
-│   ├── api-gateway/          # Public API gateway
-│   ├── product/              # Product catalog service
-│   ├── cart/                 # Shopping cart service
-│   ├── order/                # Order processing service
-│   └── user/                 # User management service
+│   ├── api-gateway/          # Public API gateway (port 8080)
+│   ├── product/              # Product catalog (port 8081)
+│   ├── cart/                 # Shopping cart (port 8082)
+│   ├── order/                # Order processing (port 8083)
+│   └── user/                 # User management (port 8084)
 └── README.md
 ```
 
-## Quick Start
+## Prerequisites
+
+- [Rust](https://rustup.rs/) (1.91+)
+- [cargo-component](https://github.com/bytecodealliance/cargo-component): `cargo install cargo-component`
+
+## Building
+
+Build all services:
 
 ```bash
-# Start the daemon
-fabricks daemon start
-
-# Build and run all services
-fabricks mortar up --build
-
-# Test the API
-curl http://localhost:8080/health
-curl http://localhost:8080/api/products
-curl http://localhost:8080/api/cart
-
-# View service status
-fabricks mortar ps
-
-# View logs
-fabricks mortar logs --follow
-
-# Stop everything
-fabricks mortar down
+cd examples/e-commerce/services/api-gateway && cargo component build --release
+cd examples/e-commerce/services/product && cargo component build --release
+cd examples/e-commerce/services/cart && cargo component build --release
+cd examples/e-commerce/services/order && cargo component build --release
+cd examples/e-commerce/services/user && cargo component build --release
 ```
 
-## What This Demonstrates
+## Services
 
-- Complete microservices architecture
-- API gateway pattern
-- Multi-tier network segmentation
-- Service-to-service communication
-- Redis caching layer
-- PostgreSQL database
-- Component Model imports/exports
-- Auto-scaling configuration
-- Production-ready health checks
+### API Gateway (port 8080)
+
+Entry point for the platform. Returns service information.
+
+```bash
+curl http://localhost:8080/           # Service info
+curl http://localhost:8080/health     # Health check
+curl http://localhost:8080/api/products  # Product service info
+curl http://localhost:8080/api/cart      # Cart service info
+curl http://localhost:8080/api/orders    # Order service info
+curl http://localhost:8080/api/users     # User service info
+```
+
+### Product Service (port 8081)
+
+Product catalog with pre-populated items.
+
+```bash
+curl http://localhost:8081/           # List all products
+curl http://localhost:8081/1          # Get product by ID
+curl http://localhost:8081/health     # Health check
+```
+
+### Cart Service (port 8082)
+
+Shopping cart management per user.
+
+```bash
+curl http://localhost:8082/1          # Get cart for user 1
+curl -X POST http://localhost:8082/1/items  # Add item to cart
+curl -X DELETE http://localhost:8082/1/items/1  # Remove item
+curl http://localhost:8082/health     # Health check
+```
+
+### Order Service (port 8083)
+
+Order creation and management.
+
+```bash
+curl http://localhost:8083/           # List all orders
+curl http://localhost:8083/1          # Get order by ID
+curl -X POST http://localhost:8083/   # Create new order
+curl http://localhost:8083/health     # Health check
+```
+
+### User Service (port 8084)
+
+User management with pre-populated users.
+
+```bash
+curl http://localhost:8084/           # List all users
+curl http://localhost:8084/1          # Get user by ID
+curl -X POST http://localhost:8084/   # Create new user
+curl http://localhost:8084/health     # Health check
+```
 
 ## Architecture
 
@@ -73,90 +124,32 @@ fabricks mortar down
 │                                                           │
 │   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐ │
 │   │ Product  │  │   Cart   │  │  Order   │  │   User   │ │
-│   │ Service  │  │ Service  │  │ Service  │  │ Service  │ │
-│   └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘ │
-└────────┼─────────────┼─────────────┼─────────────┼───────┘
-         │             │             │             │
-┌────────▼─────────────▼─────────────▼─────────────▼───────┐
-│                   [data network]                          │
-│                                                           │
-│        ┌──────────────────┐    ┌──────────────────┐      │
-│        │    PostgreSQL    │    │      Redis       │      │
-│        │   (persistence)  │    │    (caching)     │      │
-│        └──────────────────┘    └──────────────────┘      │
+│   │  :8081   │  │  :8082   │  │  :8083   │  │  :8084   │ │
+│   └──────────┘  └──────────┘  └──────────┘  └──────────┘ │
 └──────────────────────────────────────────────────────────┘
 ```
 
-## Key Features
-
-### Network Segmentation
-
-```toml
-[network.dmz]
-description = "Public-facing gateway"
-ingress = "0.0.0.0/0"
-egress = ["application"]
-
-[network.application]
-description = "Business logic tier"
-internal = true
-ingress = ["dmz"]
-egress = ["data", "cache"]
-
-[network.data]
-description = "Database tier"
-internal = true
-ingress = ["application"]
-```
-
-### Component Model Integration
-
-Services import functionality from each other:
-
-```toml
-[service.order.imports]
-cart = { service = "cart", interface = "get-cart" }
-user = { service = "user", interface = "get-user" }
-product = { service = "product", interface = "get-product" }
-```
-
-### Auto-Scaling
-
-```toml
-[service.api-gateway.replicas]
-min = 2
-max = 20
-cpu_threshold = 60
-
-[service.product.replicas]
-min = 2
-max = 10
-cpu_threshold = 70
-```
-
-## Scaling
+## Running with Fabricks
 
 ```bash
-# Scale services individually
-fabricks mortar scale api-gateway=5
-fabricks mortar scale product=3
+# Start the daemon
+fabricks daemon start
 
-# View current scale
-fabricks mortar ps
-```
+# Deploy all services
+fabricks mortar up
 
-## Development Mode
+# Test services
+curl http://localhost:8080/health
+curl http://localhost:8081/
+curl http://localhost:8082/1
+curl http://localhost:8083/
+curl http://localhost:8084/
 
-```bash
-# Run with hot reload
-fabricks mortar dev
-
-# Run specific service in dev mode
-fabricks dev ./services/product
+# Stop
+fabricks mortar down
 ```
 
 ## Next Steps
 
-- Add payment processing: See [payment-service](../payment-service/) example
-- Add monitoring: See [monitoring](../monitoring/) example
-- Production deployment: See [production docs](../../docs/production.md)
+- See [payment-service](../payment-service/) for security isolation patterns
+- See [monitoring](../monitoring/) for observability setup

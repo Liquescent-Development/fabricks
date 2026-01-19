@@ -1,0 +1,5 @@
+package component:api-gateway;
+
+world api-gateway {
+    include wasi:http/proxy@0.2.9;
+}

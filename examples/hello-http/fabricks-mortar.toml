@@ -1,0 +1,25 @@
+# Hello HTTP - Mortar Wrapper
+# Temporary wrapper to enable external access for standalone testing.
+# See: https://github.com/Liquescent-Development/fabricks/issues/18
+
+mortar_version = "1.0"
+
+[project]
+name = "hello-http"
+version = "0.1.0"
+description = "Simple HTTP service example"
+
+# External network for public access
+[network.public]
+description = "Public network with external access"
+
+[service.hello-http]
+build = "."
+type = "http"
+networks = ["public"]
+ports = ["8888:8888"]
+
+[service.hello-http.health_check.http]
+path = "/health"
+port = 8888
+interval = "30s"

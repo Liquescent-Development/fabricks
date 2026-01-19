@@ -1,0 +1,20 @@
+# Hello TCP - Mortar Wrapper
+# Temporary wrapper to enable external access for standalone testing.
+# See: https://github.com/Liquescent-Development/fabricks/issues/18
+
+mortar_version = "1.0"
+
+[project]
+name = "hello-tcp"
+version = "0.1.0"
+description = "Simple TCP echo server example"
+
+# External network for public access
+[network.public]
+description = "Public network with external access"
+
+[service.hello-tcp]
+build = "."
+type = "tcp"
+networks = ["public"]
+ports = ["9999:9999"]

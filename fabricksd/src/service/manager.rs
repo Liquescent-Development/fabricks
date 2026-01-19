@@ -767,8 +767,9 @@ impl ServiceManager {
         let mut configs: Vec<ServiceConfig> = Vec::new();
 
         for (service_name, service) in &mortar.service {
-            // Determine WASM path
-            let wasm_path = resolve_wasm_path_for_service(service_name, service, base_dir).await?;
+            // Determine WASM path and get capabilities from Fabrickfile
+            let (wasm_path, capabilities) =
+                resolve_wasm_path_for_service(service_name, service, base_dir).await?;
 
             // Load WASM and compute digest
             let wasm_bytes =
@@ -797,7 +798,7 @@ impl ServiceManager {
                 service_type: service.service_type.unwrap_or_default(),
                 wasm_path,
                 wasm_digest: digest,
-                capabilities: fabricks_common::Capabilities::default(),
+                capabilities,
                 environment,
                 args: Vec::new(),
                 resources: service.resources.clone(),
@@ -1049,12 +1050,14 @@ fn compute_digest(bytes: &[u8]) -> String {
     format!("sha256:{}", hex::encode(result))
 }
 
-/// Resolves the WASM path for a mortar service.
+/// Resolves the WASM path and capabilities for a mortar service.
+///
+/// Returns the WASM path and capabilities from the service's Fabrickfile.
 async fn resolve_wasm_path_for_service(
     service_name: &str,
     service: &fabricks_common::models::mortar::Service,
     base_dir: &Path,
-) -> Result<std::path::PathBuf> {
+) -> Result<(std::path::PathBuf, fabricks_common::Capabilities)> {
     if let Some(ref build_path) = service.build {
         let fabrickfile_path = base_dir.join(build_path).join("Fabrickfile");
 
@@ -1073,7 +1076,8 @@ async fn resolve_wasm_path_for_service(
             .map_err(|e| DaemonError::FabrickfileParseError(e.to_string()))?;
 
         if let Some(ref build) = fabrickfile.build {
-            Ok(base_dir.join(build_path).join(&build.output))
+            let wasm_path = base_dir.join(build_path).join(&build.output);
+            Ok((wasm_path, fabrickfile.capabilities))
         } else {
             Err(DaemonError::FabrickfileParseError(format!(
                 "No build configuration in Fabrickfile for service '{service_name}'"

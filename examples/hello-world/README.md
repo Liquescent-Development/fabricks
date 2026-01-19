@@ -1,6 +1,12 @@
-# Hello World Example
+# Hello World
 
-The simplest possible Fabrickfile demonstrating a minimal WASM service.
+The simplest possible Fabricks service - a CLI component that prints a greeting and exits.
+
+## What This Demonstrates
+
+- Basic WASM component structure using `wasi:cli/command`
+- Minimal Fabrickfile configuration
+- How to build a Rust WASM component with `cargo-component`
 
 ## Structure
 
@@ -8,53 +14,70 @@ The simplest possible Fabrickfile demonstrating a minimal WASM service.
 hello-world/
 ├── Fabrickfile       # Service configuration
 ├── Cargo.toml        # Rust project
+├── wit/
+│   └── world.wit     # WIT interface definition
 ├── src/
-│   └── main.rs       # Application code
+│   └── lib.rs        # Component implementation
 └── README.md
 ```
 
-## Quick Start
+## Prerequisites
+
+- [Rust](https://rustup.rs/) (1.91+)
+- [cargo-component](https://github.com/bytecodealliance/cargo-component): `cargo install cargo-component`
+
+## Building
 
 ```bash
-# Build the fabrick
-fabricks build
-
-# Run locally
-fabricks run .
-
-# Test it
-curl http://localhost:8080/
-curl http://localhost:8080/health
+cd examples/hello-world
+cargo component build --release
 ```
 
-## What This Demonstrates
+This produces `target/wasm32-wasip1/release/hello_world.wasm`.
 
-- Minimal Fabrickfile structure
-- Basic capability grants (network listen)
-- HTTP health check configuration
-- Rust-to-WASM compilation
+## Running
+
+```bash
+# Using wasmtime directly
+wasmtime target/wasm32-wasip1/release/hello_world.wasm
+
+# Or with the Fabricks CLI (once daemon is running)
+fabricks service run examples/hello-world
+```
+
+## Output
+
+```
+Hello from Fabricks!
+
+This is the simplest possible WASM service.
+It demonstrates a CLI component using wasi:cli/command.
+```
+
+## How It Works
+
+This service implements the `wasi:cli/run` interface. When executed:
+
+1. The WASM runtime calls the `run()` function
+2. The component prints its greeting to stdout
+3. The component returns `Ok(())` to indicate success
+4. The runtime exits cleanly
 
 ## Key Configuration
 
 ```toml
-# Specify the language runtime
-[from]
-source = "rust"
+[info]
+name = "hello-world"
+version = "0.1.0"
+type = "cli"  # CLI type - runs once and exits
 
-# Build command for WASM target
 [build]
-command = "cargo build --target wasm32-wasi --release"
-output = "target/wasm32-wasi/release/hello_world.wasm"
-
-# Grant permission to listen on port 8080
-[capabilities.network]
-listen = [8080]
+command = "cargo component build --release"
+output = "target/wasm32-wasip1/release/hello_world.wasm"
 ```
 
 ## Next Steps
 
-- Add environment variables: `[capabilities] env = ["LOG_LEVEL"]`
-- Add filesystem access: `[capabilities.filesystem] read = ["./config"]`
-- Connect to other services: `[capabilities.network] connect = ["redis:6379"]`
-
-See the [multi-service-api](../multi-service-api/) example for a more complete application.
+- See [hello-http](../hello-http/) for an HTTP service example
+- See [hello-tcp](../hello-tcp/) for a TCP service example
+- See [multi-service-api](../multi-service-api/) for a multi-service application

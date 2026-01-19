@@ -15,10 +15,8 @@ source = "rust"
 path = "."
 
 [build]
-command = "cargo build --target wasm32-wasi --release"
-output = "target/wasm32-wasi/release/payment_processor.wasm"
-
-exports = ["charge", "refund", "verify_webhook"]
+command = "cargo component build --release"
+output = "target/wasm32-wasip1/release/payment_processor.wasm"
 
 [capabilities]
 # Only required environment variables

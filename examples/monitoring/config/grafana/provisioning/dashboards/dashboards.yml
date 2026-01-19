@@ -1,0 +1,15 @@
+# Grafana Dashboard Provisioning
+# Automatically load dashboards from the configured paths
+
+apiVersion: 1
+
+providers:
+  - name: 'Fabricks Dashboards'
+    orgId: 1
+    folder: 'Fabricks'
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards

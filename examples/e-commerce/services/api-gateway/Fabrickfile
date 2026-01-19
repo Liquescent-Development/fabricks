@@ -1,11 +1,12 @@
 # API Gateway Service
-# Routes requests to backend services
+# Entry point for the e-commerce platform
 
 fabrick_version = "1.0"
 
 [info]
 name = "api-gateway"
 version = "1.0.0"
+type = "http"
 description = "API gateway for e-commerce platform"
 
 [from]
@@ -15,21 +16,13 @@ source = "rust"
 path = "."
 
 [build]
-command = "cargo build --target wasm32-wasi --release"
-output = "target/wasm32-wasi/release/api_gateway.wasm"
-
-[capabilities]
-env = ["LOG_LEVEL", "PRODUCT_SERVICE", "CART_SERVICE", "ORDER_SERVICE", "USER_SERVICE"]
+command = "cargo component build --release"
+output = "target/wasm32-wasip1/release/api_gateway.wasm"
 
 [capabilities.network]
-listen = [8080]
-connect = ["product:8081", "cart:8082", "order:8083", "user:8084"]
+listen = [8085]
 
 [health_check.http]
 path = "/health"
-port = 8080
+port = 8085
 interval = "10s"
-
-[config.resources]
-memory = "256Mi"
-cpu = 0.5
