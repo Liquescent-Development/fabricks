@@ -1,6 +1,13 @@
 //! Build command implementation.
 //!
 //! Compiles a Fabrickfile into a WASM module and stores it locally.
+//!
+//! ## Base Image Support
+//!
+//! If the Fabrickfile specifies `[from].image`, the build process will:
+//! 1. Pull or load the base image from local cache
+//! 2. Compose the base runtime with the user's code
+//! 3. Store the result as a multi-layer module
 
 use std::path::Path;
 use std::process::Command;
@@ -8,8 +15,8 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use fabricks_common::parser::FABRICKFILE_NAME;
 use fabricks_common::{Fabrickfile, parse_fabrickfile};
-use fabricks_oci::{FabricksModule, LocalStorage};
-use tracing::{debug, info};
+use fabricks_oci::{FabricksModule, LocalStorage, media_types};
+use tracing::{debug, info, warn};
 
 use crate::cli::{BuildArgs, OutputFormat};
 use crate::output::writeln_stderr;
@@ -35,6 +42,19 @@ pub async fn run(args: &BuildArgs) -> Result<()> {
         fabrickfile.info.name, fabrickfile.info.version
     );
 
+    // Handle base image if specified
+    let storage = get_local_storage().await?;
+    let base_layer = if let Some(ref from) = fabrickfile.from {
+        if let Some(ref image_ref) = from.image {
+            info!("Loading base image: {image_ref}");
+            Some(load_base_image(&storage, image_ref).await?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // Run build command unless --no-build is specified
     if !args.no_build {
         run_build_command(&fabrickfile, workdir)?;
@@ -43,8 +63,13 @@ pub async fn run(args: &BuildArgs) -> Result<()> {
     // Read the WASM output
     let wasm_bytes = read_wasm_output(&fabrickfile, workdir)?;
 
-    // Create the module
-    let module = FabricksModule::new(fabrickfile.clone(), wasm_bytes);
+    // Create the module, optionally with base layer
+    let module = if let Some(runtime_wasm) = base_layer {
+        info!("Composing with base runtime layer");
+        FabricksModule::new(fabrickfile.clone(), wasm_bytes).with_runtime_layer(runtime_wasm)
+    } else {
+        FabricksModule::new(fabrickfile.clone(), wasm_bytes)
+    };
 
     // Determine the tag
     let tag = args
@@ -52,9 +77,8 @@ pub async fn run(args: &BuildArgs) -> Result<()> {
         .clone()
         .unwrap_or_else(|| format!("{}:{}", fabrickfile.info.name, fabrickfile.info.version));
 
-    // Store locally
-    let storage = get_local_storage().await?;
-    store_module(&storage, &module, &tag).await?;
+    // Store locally using the new multi-layer-aware method
+    storage.store_module(&module, &tag).await.context("Failed to store module")?;
 
     // Output result
     match args.format {
@@ -186,73 +210,55 @@ async fn get_local_storage() -> Result<LocalStorage> {
         .context("Failed to initialize local storage")
 }
 
-/// Store a module in local storage.
-async fn store_module(storage: &LocalStorage, module: &FabricksModule, tag: &str) -> Result<()> {
-    // Store config blob
-    let config_bytes = module
-        .config_bytes()
-        .context("Failed to serialize config")?;
-    let config_digest = storage
-        .store_blob(&config_bytes)
+/// Load a base image from local storage.
+///
+/// Returns the runtime layer bytes if found.
+async fn load_base_image(storage: &LocalStorage, image_ref: &str) -> Result<Vec<u8>> {
+    debug!("Looking for base image in local storage: {image_ref}");
+
+    // Try to get the runtime layer from local storage
+    match storage
+        .get_layer_by_media_type(image_ref, media_types::RUNTIME_LAYER_MEDIA_TYPE)
         .await
-        .context("Failed to store config blob")?;
-    debug!("Stored config: {config_digest}");
+    {
+        Ok(Some(layer)) => {
+            debug!("Found runtime layer in local cache ({} bytes)", layer.len());
+            return Ok(layer);
+        }
+        Ok(None) => {
+            // No runtime layer - try module layer as fallback
+            debug!("No runtime layer, trying module layer as base");
+        }
+        Err(e) => {
+            debug!("Base image not in local cache: {e}");
+        }
+    }
 
-    // Store WASM blob
-    let wasm_digest = storage
-        .store_blob(module.wasm_bytes())
+    // Try the module layer if no runtime layer
+    match storage
+        .get_layer_by_media_type(image_ref, media_types::WASM_LAYER_MEDIA_TYPE)
         .await
-        .context("Failed to store WASM blob")?;
-    debug!("Stored WASM: {wasm_digest}");
-
-    // Build and store manifest
-    let manifest = build_local_manifest(module, &config_digest, &wasm_digest);
-    let manifest_bytes =
-        serde_json::to_vec_pretty(&manifest).context("Failed to serialize manifest")?;
-    let manifest_digest = storage
-        .store_blob(&manifest_bytes)
-        .await
-        .context("Failed to store manifest")?;
-    debug!("Stored manifest: {manifest_digest}");
-
-    // Add to index
-    storage
-        .add_to_index(
-            tag,
-            &manifest_digest,
-            i64::try_from(manifest_bytes.len()).unwrap_or(i64::MAX),
-        )
-        .await
-        .context("Failed to update storage index")?;
-
-    Ok(())
-}
-
-/// Build a local manifest for storage.
-fn build_local_manifest(
-    module: &FabricksModule,
-    config_digest: &str,
-    wasm_digest: &str,
-) -> serde_json::Value {
-    let config_bytes = module.config_bytes().unwrap_or_default();
-    let annotations = module.build_annotations();
-
-    serde_json::json!({
-        "schemaVersion": 2,
-        "mediaType": "application/vnd.oci.image.manifest.v1+json",
-        "artifactType": "application/vnd.fabricks.module.v1",
-        "config": {
-            "mediaType": "application/vnd.fabricks.config.v1+toml",
-            "digest": config_digest,
-            "size": config_bytes.len(),
-        },
-        "layers": [{
-            "mediaType": "application/vnd.fabricks.module.v1+wasm",
-            "digest": wasm_digest,
-            "size": module.wasm_size(),
-        }],
-        "annotations": annotations,
-    })
+    {
+        Ok(Some(layer)) => {
+            warn!(
+                "Using module layer as runtime (base image '{}' has no dedicated runtime layer)",
+                image_ref
+            );
+            Ok(layer)
+        }
+        Ok(None) => {
+            bail!(
+                "Base image '{image_ref}' not found in local storage.\n\
+                 Run 'fabricks pull {image_ref}' first, or build the base image locally."
+            );
+        }
+        Err(e) => {
+            bail!(
+                "Failed to load base image '{image_ref}': {e}\n\
+                 Run 'fabricks pull {image_ref}' first."
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -384,24 +390,6 @@ mod tests {
 
         let result = read_wasm_output(&fabrickfile, temp.path()).expect("read wasm");
         assert_eq!(result, wasm_content);
-    }
-
-    #[test]
-    fn test_build_local_manifest() {
-        let fabrickfile = test_fabrickfile();
-        let wasm = vec![0x00, 0x61, 0x73, 0x6d];
-        let module = FabricksModule::new(fabrickfile, wasm);
-
-        let manifest = build_local_manifest(&module, "sha256:config123", "sha256:wasm456");
-
-        assert_eq!(manifest["schemaVersion"], 2);
-        assert_eq!(
-            manifest["mediaType"],
-            "application/vnd.oci.image.manifest.v1+json"
-        );
-        assert_eq!(manifest["config"]["digest"], "sha256:config123");
-        assert_eq!(manifest["layers"][0]["digest"], "sha256:wasm456");
-        assert_eq!(manifest["layers"][0]["size"], 4);
     }
 
     #[test]

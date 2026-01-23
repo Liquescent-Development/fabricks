@@ -133,10 +133,9 @@ pub async fn validate_connection(
                 PolicyDecision::Deny { reason, .. } => {
                     return ConnectionDecision::DenyPolicy { reason };
                 }
-                PolicyDecision::Warn { .. } => {
-                    // Warning already logged by engine, continue to allow
+                PolicyDecision::Warn { .. } | PolicyDecision::Allow => {
+                    // Warning already logged by engine for Warn, continue to allow
                 }
-                PolicyDecision::Allow => {}
             }
         }
 
@@ -155,10 +154,9 @@ pub async fn validate_connection(
             PolicyDecision::Deny { reason, .. } => {
                 return ConnectionDecision::DenyPolicy { reason };
             }
-            PolicyDecision::Warn { .. } => {
-                // Warning already logged by engine, continue to allow
+            PolicyDecision::Warn { .. } | PolicyDecision::Allow => {
+                // Warning already logged by engine for Warn, continue to allow
             }
-            PolicyDecision::Allow => {}
         }
     }
 

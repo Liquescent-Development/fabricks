@@ -33,6 +33,7 @@
 //! ```
 
 pub mod client;
+pub mod compose;
 pub mod digest;
 pub mod error;
 pub mod media_types;
@@ -42,7 +43,7 @@ pub mod storage;
 // Re-export commonly used types
 pub use client::{ClientConfig, FabricksClient};
 pub use error::{OciError, Result};
-pub use module::{FabricksModule, PulledModule};
+pub use module::{FabricksModule, ModuleLayer, PulledModule};
 pub use storage::LocalStorage;
 
 // Re-export oci-client types for convenience

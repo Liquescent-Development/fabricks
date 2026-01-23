@@ -79,8 +79,8 @@ impl PolicyDecision {
             Self::Allow => None,
             Self::Deny {
                 rule_description, ..
-            } => Some(rule_description),
-            Self::Warn {
+            }
+            | Self::Warn {
                 rule_description, ..
             } => Some(rule_description),
         }
@@ -91,8 +91,7 @@ impl PolicyDecision {
     pub fn reason(&self) -> Option<&str> {
         match self {
             Self::Allow => None,
-            Self::Deny { reason, .. } => Some(reason),
-            Self::Warn { reason, .. } => Some(reason),
+            Self::Deny { reason, .. } | Self::Warn { reason, .. } => Some(reason),
         }
     }
 }

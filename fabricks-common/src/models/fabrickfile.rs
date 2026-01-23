@@ -185,6 +185,11 @@ pub struct From {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<SourceLanguage>,
 
+    /// Version of the language runtime (e.g., "3.12" for Python).
+    /// If not specified, uses the latest stable version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+
     /// Build on top of another fabrick image.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
@@ -215,6 +220,14 @@ pub enum SourceLanguage {
 pub struct Source {
     /// Path to source code (relative to Fabrickfile).
     pub path: String,
+
+    /// Entrypoint for interpreted languages (e.g., "app:handler" for Python).
+    ///
+    /// Format depends on the language:
+    /// - Python: "module:function" or "module:Class"
+    /// - JavaScript: "file.js:exportName"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entrypoint: Option<String>,
 
     /// Files to include in build context (glob patterns).
     #[serde(default, skip_serializing_if = "Option::is_none")]

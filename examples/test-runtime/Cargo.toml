@@ -1,0 +1,28 @@
+[package]
+name = "test-runtime"
+version = "1.0.0"
+edition = "2024"
+description = "Minimal runtime for testing multi-layer OCI support"
+
+# Not part of the main workspace - standalone example
+[workspace]
+
+[dependencies]
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"] }
+
+# Override workspace lints - wit-bindgen generates code that may trigger warnings
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "allow"
+
+[lints.clippy]
+pedantic = "allow"
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.component]
+package = "fabricks:test-runtime"
+
+[package.metadata.component.target.dependencies]
+"wasi:http" = "0.2.9"

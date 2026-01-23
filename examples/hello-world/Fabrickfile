@@ -6,7 +6,7 @@ fabrick_version = "1.0"
 [info]
 name = "hello-world"
 version = "0.1.0"
-type = "cli"
+type = "command"
 description = "The simplest possible Fabricks service - prints a greeting and exits"
 
 [from]

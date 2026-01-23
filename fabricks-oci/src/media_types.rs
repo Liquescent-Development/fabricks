@@ -12,6 +12,10 @@ pub const CONFIG_MEDIA_TYPE: &str = "application/vnd.fabricks.config.v1+toml";
 /// Media type for the WASM module layer.
 pub const WASM_LAYER_MEDIA_TYPE: &str = "application/vnd.fabricks.module.v1+wasm";
 
+/// Media type for the runtime/base image layer.
+/// Used for language runtimes (Python, JavaScript, etc.) that user code builds upon.
+pub const RUNTIME_LAYER_MEDIA_TYPE: &str = "application/vnd.fabricks.runtime.v1+wasm";
+
 /// Media type for static files layer (gzipped tar).
 pub const FILES_LAYER_MEDIA_TYPE: &str = "application/vnd.fabricks.files.v1.tar+gzip";
 

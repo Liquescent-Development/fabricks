@@ -20,8 +20,9 @@ fn test_parse_hello_world_fabrickfile() {
 
     assert_eq!(fabrickfile.fabrick_version, "1.0");
     assert_eq!(fabrickfile.info.name, "hello-world");
-    assert_eq!(fabrickfile.info.version, "1.0.0");
-    assert!(fabrickfile.capabilities.can_listen(8080));
+    assert_eq!(fabrickfile.info.version, "0.1.0");
+    // CLI service with no network capabilities
+    assert!(!fabrickfile.capabilities.can_listen(8080));
 }
 
 /// Test parsing a more complex Fabrickfile with all sections.
