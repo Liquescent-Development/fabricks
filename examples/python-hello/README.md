@@ -1,47 +1,70 @@
 # Python Hello World
 
-A simple Python HTTP service running on Fabricks.
+A simple Python HTTP service demonstrating the Fabricks Python runtime.
 
-## Overview
+**No WASM toolchain required!** Just write Python and run.
 
-This example demonstrates how easy it is to run Python on Fabricks:
+## Quick Start
 
-1. Write regular Python code
-2. Specify `source = "python"` in your Fabrickfile
-3. Run `fabricks build`
+```bash
+# Build your Python service
+fabricks build examples/python-hello
 
-That's it! Fabricks handles all the WASM complexity automatically.
+# Run it
+fabricks run python-hello:latest
+```
+
+## How It Works
+
+1. **Write Python** - Create a handler function in `app.py`
+2. **Configure** - Point to it in your `Fabrickfile`
+3. **Build & Run** - Fabricks handles the rest
 
 ## Files
 
-- `Fabrickfile` - Service configuration
-- `app.py` - Your Python application
+- `app.py` - Your Python HTTP handler
+- `Fabrickfile` - Simple configuration
 
-## Building
+## Handler Interface
 
-```bash
-fabricks build examples/python-hello
-```
+Your handler receives a request dict and returns a response dict:
 
-## Running
+```python
+def handler(request):
+    # Request contains:
+    # - method: "GET", "POST", etc.
+    # - path: "/hello"
+    # - query: {"name": "World"}
+    # - headers: {"content-type": "..."}
 
-```bash
-fabricks run examples/python-hello
+    return {
+        "status": 200,
+        "headers": {"content-type": "text/plain"},
+        "body": "Hello, World!"
+    }
 ```
 
 ## Endpoints
 
-- `GET /` - Hello message
-- `GET /health` - Health check
+This example provides:
+
+- `GET /` - Returns "Hello from Python on Fabricks!"
+- `GET /health` - Health check endpoint
 - `GET /greet?name=Alice` - Personalized greeting
-- `GET /json` - JSON response
+- `GET /json` - JSON response example
 
-## How It Works
+## Configuration
 
-When you specify `source = "python"`, Fabricks automatically:
+The `Fabrickfile` is minimal:
 
-1. Uses [componentize-py](https://github.com/bytecodealliance/componentize-py) to bundle your Python code with the CPython interpreter
-2. Creates a WASM component that implements the HTTP handler interface
-3. Stores the result as an OCI artifact
+```toml
+[from]
+source = "python"
+version = "3.12"
 
-You never need to learn about WASM toolchains - just write Python!
+[source]
+path = "."
+entrypoint = "app:handler"
+```
+
+That's it! No build commands, no WASM toolchain, no complexity.

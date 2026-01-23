@@ -1,9 +1,8 @@
 # Python Hello World
 #
-# A simple Python HTTP service. Just write Python - Fabricks handles the rest.
+# A simple Python HTTP service - no WASM knowledge required!
 #
-# No need to know about WASM, componentize-py, or any other toolchain.
-# Fabricks automatically builds your Python code into a WASM component.
+# Just write Python and run: fabricks build && fabricks run
 
 fabrick_version = "1.0"
 
@@ -13,7 +12,7 @@ version = "1.0.0"
 type = "http"
 description = "A simple Python HTTP service"
 
-# Use the Python runtime - Fabricks handles the WASM build automatically
+# Use the Python runtime - Fabricks handles everything else
 [from]
 source = "python"
 version = "3.12"
@@ -23,6 +22,5 @@ version = "3.12"
 path = "."
 entrypoint = "app:handler"
 
-# Network capabilities
 [capabilities.network]
 listen = [8080]

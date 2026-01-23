@@ -2,12 +2,25 @@
 //!
 //! Compiles a Fabrickfile into a WASM module and stores it locally.
 //!
+//! ## Language Builders
+//!
+//! If the Fabrickfile specifies `[from].source` (e.g., "python", "rust"),
+//! the build uses the appropriate language builder automatically:
+//!
+//! - `source = "rust"` → cargo-component
+//! - `source = "python"` → componentize-py
+//!
 //! ## Base Image Support
 //!
 //! If the Fabrickfile specifies `[from].image`, the build process will:
 //! 1. Pull or load the base image from local cache
 //! 2. Compose the base runtime with the user's code
 //! 3. Store the result as a multi-layer module
+//!
+//! ## Custom Build Commands
+//!
+//! If neither `[from].source` nor `[from].image` is specified, the build
+//! uses the `[build].command` for custom build steps.
 
 use std::path::Path;
 use std::process::Command;
@@ -18,6 +31,7 @@ use fabricks_common::{Fabrickfile, parse_fabrickfile};
 use fabricks_oci::{FabricksModule, LocalStorage, media_types};
 use tracing::{debug, info, warn};
 
+use crate::builders::{BuilderConfig, build_with_source};
 use crate::cli::{BuildArgs, OutputFormat};
 use crate::output::writeln_stderr;
 
@@ -55,13 +69,13 @@ pub async fn run(args: &BuildArgs) -> Result<()> {
         None
     };
 
-    // Run build command unless --no-build is specified
-    if !args.no_build {
-        run_build_command(&fabrickfile, workdir)?;
-    }
-
-    // Read the WASM output
-    let wasm_bytes = read_wasm_output(&fabrickfile, workdir)?;
+    // Build the WASM output
+    let wasm_bytes = if args.no_build {
+        // --no-build: just read the existing output
+        read_wasm_output(&fabrickfile, workdir)?
+    } else {
+        build_wasm(&fabrickfile, workdir)?
+    };
 
     // Create the module, optionally with base layer
     let module = if let Some(runtime_wasm) = base_layer {
@@ -101,6 +115,38 @@ pub async fn run(args: &BuildArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Build WASM output using the appropriate method.
+///
+/// This function chooses between:
+/// 1. Language builder (if `[from].source` is specified)
+/// 2. Custom build command (if `[build].command` is specified)
+fn build_wasm(fabrickfile: &Fabrickfile, workdir: &Path) -> Result<Vec<u8>> {
+    // Check if we should use a language builder
+    let use_builder = fabrickfile
+        .from
+        .as_ref()
+        .is_some_and(|from| from.source.is_some());
+
+    if use_builder {
+        // Use language builder
+        info!("Using language builder");
+        let config = BuilderConfig {
+            fabrickfile,
+            workdir,
+            release: true, // Always build release for production
+        };
+
+        let output = build_with_source(&config)?;
+
+        // Read the built WASM
+        std::fs::read(&output.wasm_path).context("Failed to read built WASM file")
+    } else {
+        // Use custom build command
+        run_build_command(fabrickfile, workdir)?;
+        read_wasm_output(fabrickfile, workdir)
+    }
 }
 
 /// Find the Fabrickfile, returning its path and parsed content.

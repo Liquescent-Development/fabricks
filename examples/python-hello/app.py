@@ -11,10 +11,10 @@ def handler(request):
     Handle incoming HTTP requests.
 
     Args:
-        request: HTTP request object with method, path, headers, body
+        request: Dict with method, path, query, headers
 
     Returns:
-        HTTP response dict with status, headers, body
+        Dict with status, headers, body
     """
     path = request.get("path", "/")
     method = request.get("method", "GET")
