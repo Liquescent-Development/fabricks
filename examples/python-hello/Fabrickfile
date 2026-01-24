@@ -23,4 +23,4 @@ path = "."
 entrypoint = "app:handler"
 
 [capabilities.network]
-listen = [8080]
+listen = [8088]

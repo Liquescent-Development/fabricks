@@ -2,23 +2,61 @@
 
 A simple Python HTTP service demonstrating the Fabricks Python runtime.
 
-**No WASM toolchain required!** Just write Python and run.
+**No WASM toolchain required!** Just write Python and run through the Fabricks daemon.
 
 ## Quick Start
 
 ```bash
-# Build your Python service
+# 1. Start the daemon (if not already running)
+fabricksd &
+
+# 2. Build your Python service
 fabricks build examples/python-hello
 
-# Run it
-fabricks run python-hello:latest
+# 3. Run it through the daemon
+fabricks run python-hello:1.0.0
+# Output: Service 'python-hello' started with ID: svc-xxxxxxxx
+```
+
+By default, services are **internal only** for security. To allow external HTTP access:
+
+```bash
+# 4. Create a network with external access
+fabricks network create public
+# Output: Created network 'public' (net-xxxxxxxx)
+
+# 5. Add your service to the network
+fabricks network join public python-hello
+
+# 6. Test it!
+curl http://localhost:8088/
+# Output: Hello from Python on Fabricks!
+```
+
+## Architecture
+
+All execution goes through the Fabricks daemon, which provides:
+
+- **Capability-based security** - Services can only access explicitly granted resources
+- **Network isolation** - Services are internal by default, must be explicitly exposed
+- **HTTP proxying** - The daemon routes HTTP requests to your WASM service
+
+```
+┌──────────────┐    ┌─────────────────────────────────────────────┐
+│   curl       │───▶│  fabricksd (daemon)                         │
+│   browser    │    │  ├─ Network security (public/internal)      │
+│   etc.       │    │  ├─ HTTP proxy                              │
+└──────────────┘    │  └─ WASM runtime                            │
+                    │       └─ Python runtime + your code         │
+                    └─────────────────────────────────────────────┘
 ```
 
 ## How It Works
 
 1. **Write Python** - Create a handler function in `app.py`
 2. **Configure** - Point to it in your `Fabrickfile`
-3. **Build & Run** - Fabricks handles the rest
+3. **Build** - Fabricks packages your code with the Python runtime
+4. **Run** - The daemon loads and executes your service
 
 ## Files
 
@@ -53,11 +91,26 @@ This example provides:
 - `GET /greet?name=Alice` - Personalized greeting
 - `GET /json` - JSON response example
 
+```bash
+# Test all endpoints (after adding to public network)
+curl http://localhost:8088/
+curl http://localhost:8088/health
+curl "http://localhost:8088/greet?name=Alice"
+curl http://localhost:8088/json
+```
+
 ## Configuration
 
 The `Fabrickfile` is minimal:
 
 ```toml
+fabrick_version = "1.0"
+
+[info]
+name = "python-hello"
+version = "1.0.0"
+type = "http"
+
 [from]
 source = "python"
 version = "3.12"
@@ -65,6 +118,45 @@ version = "3.12"
 [source]
 path = "."
 entrypoint = "app:handler"
+
+[capabilities.network]
+listen = [8088]
 ```
 
 That's it! No build commands, no WASM toolchain, no complexity.
+
+## Network Security
+
+Services in Fabricks are **internal by default**. This means:
+
+- Other Fabricks services can call them
+- External HTTP requests are blocked
+
+To expose a service externally:
+
+1. Create a network with external access: `fabricks network create public`
+2. Add your service to that network: `fabricks network join public python-hello`
+
+This follows the principle of least privilege - services must explicitly opt-in to external exposure.
+
+## Service Management
+
+```bash
+# List all services
+fabricks service ls
+
+# Get service details
+fabricks service inspect python-hello
+
+# Stop service
+fabricks service stop python-hello
+
+# Remove service
+fabricks service rm python-hello
+
+# List networks
+fabricks network ls
+
+# Remove service from network
+fabricks network leave public python-hello
+```

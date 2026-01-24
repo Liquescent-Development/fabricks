@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Create application state
-    let state = AppState::new(config.clone())?;
+    let state = AppState::new(config.clone()).await?;
     state.initialize().await?;
     info!("Initialized state");
 

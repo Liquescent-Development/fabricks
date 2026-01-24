@@ -1,16 +1,29 @@
 //! Fabricks module representation for OCI artifacts.
 //!
-//! A `FabricksModule` bundles a WASM binary with its Fabrickfile configuration
-//! and optional static files for distribution via OCI registries.
+//! A `FabricksModule` bundles WASM binaries and/or source code with Fabrickfile
+//! configuration for distribution via OCI registries.
 //!
-//! ## Multi-Layer Support
+//! ## Two Models: Compiled vs Interpreted
 //!
-//! `FabricksModule` supports multiple WASM layers for base image composition:
-//! - **Runtime layer**: Base runtime (Python, JavaScript, etc.) - optional
-//! - **Module layer**: User's WASM code - always required
+//! Fabricks supports two distinct models for different language types:
 //!
-//! When a base image is specified via `[from].image` in the Fabrickfile,
-//! the runtime layer is composed with the user's code at build time.
+//! ### Compiled Languages (Rust, Go, etc.)
+//!
+//! User code compiles to WASM and can be composed with base runtimes:
+//! - **Runtime layer** (optional): Base runtime WASM
+//! - **Module layer**: User's compiled WASM
+//!
+//! Layers are composed using WASM component linking (wac-graph).
+//!
+//! ### Interpreted Languages (Python, JavaScript, etc.)
+//!
+//! User code stays as source files, executed by a pre-built runtime:
+//! - **Runtime layer**: Pre-built interpreter WASM (e.g., `CPython`)
+//! - **Source layer(s)**: User's source files (tar+gzip)
+//!
+//! At runtime, source layers are extracted and mounted via WASI preopens.
+//! Multiple source layers stack (later layers override earlier ones),
+//! enabling Docker-like inheritance patterns.
 
 use std::collections::HashMap;
 
@@ -76,6 +89,12 @@ impl ModuleLayer {
     pub fn is_module(&self) -> bool {
         self.media_type == media_types::WASM_LAYER_MEDIA_TYPE
     }
+
+    /// Check if this is a source code layer.
+    #[must_use]
+    pub fn is_source(&self) -> bool {
+        self.media_type == media_types::SOURCE_LAYER_MEDIA_TYPE
+    }
 }
 
 /// A Fabricks module ready for OCI distribution.
@@ -130,17 +149,42 @@ impl FabricksModule {
     /// Create a new Fabricks module from explicit layers.
     ///
     /// Use this when you have pre-built layers (e.g., from a pulled image).
-    /// Layers should be in order: runtime first (if present), then module.
+    /// Layers should be in order: runtime first (if present), then module/source.
     ///
     /// # Arguments
     ///
     /// * `config` - The Fabrickfile configuration
-    /// * `layers` - The WASM layers in order
+    /// * `layers` - The layers in order
     #[must_use]
     pub fn from_layers(config: Fabrickfile, layers: Vec<ModuleLayer>) -> Self {
         Self {
             config,
             layers,
+            files: None,
+            annotations: HashMap::new(),
+        }
+    }
+
+    /// Create a new Fabricks module for an interpreted language.
+    ///
+    /// This creates a module with a runtime WASM layer and source code layer.
+    /// Used for Python, JavaScript, and other interpreted languages where
+    /// user code is not compiled to WASM.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The Fabrickfile configuration
+    /// * `runtime_wasm` - The pre-built runtime WASM (e.g., Python interpreter)
+    /// * `source_tar` - Gzipped tar of user's source files
+    #[must_use]
+    pub fn new_interpreted(config: Fabrickfile, runtime_wasm: Vec<u8>, source_tar: Vec<u8>) -> Self {
+        let runtime_layer =
+            ModuleLayer::new(media_types::RUNTIME_LAYER_MEDIA_TYPE, runtime_wasm);
+        let source_layer = ModuleLayer::new(media_types::SOURCE_LAYER_MEDIA_TYPE, source_tar);
+
+        Self {
+            config,
+            layers: vec![runtime_layer, source_layer],
             files: None,
             annotations: HashMap::new(),
         }
@@ -161,6 +205,22 @@ impl FabricksModule {
 
         // Insert runtime at the beginning
         self.layers.insert(0, runtime_layer);
+        self
+    }
+
+    /// Add a source code layer (for interpreted languages like Python/JS).
+    ///
+    /// Source layers contain application source code that will be mounted
+    /// at runtime via WASI preopens. Multiple source layers can be added
+    /// and they stack (later layers override earlier ones).
+    ///
+    /// # Arguments
+    ///
+    /// * `source_tar` - Gzipped tar archive of source files
+    #[must_use]
+    pub fn with_source_layer(mut self, source_tar: Vec<u8>) -> Self {
+        let source_layer = ModuleLayer::new(media_types::SOURCE_LAYER_MEDIA_TYPE, source_tar);
+        self.layers.push(source_layer);
         self
     }
 
@@ -244,6 +304,22 @@ impl FabricksModule {
     #[must_use]
     pub fn has_runtime_layer(&self) -> bool {
         self.layers.iter().any(ModuleLayer::is_runtime)
+    }
+
+    /// Check if this module has any source code layers.
+    #[must_use]
+    pub fn has_source_layers(&self) -> bool {
+        self.layers.iter().any(ModuleLayer::is_source)
+    }
+
+    /// Get all source code layers.
+    ///
+    /// Returns layers in order (earlier layers first).
+    /// For interpreted language apps, these contain the source files
+    /// that will be mounted at runtime.
+    #[must_use]
+    pub fn source_layers(&self) -> Vec<&ModuleLayer> {
+        self.layers.iter().filter(|l| l.is_source()).collect()
     }
 
     /// Get the number of layers in this module.
@@ -529,5 +605,71 @@ mod tests {
         assert!(module.wasm_digest().starts_with("sha256:"));
         assert!(module.runtime_layer().is_none());
         assert!(module.module_layer().is_some());
+    }
+
+    #[test]
+    fn test_source_layer() {
+        let source_data = b"source code tar".to_vec();
+        let layer = ModuleLayer::new(media_types::SOURCE_LAYER_MEDIA_TYPE, source_data);
+
+        assert!(layer.is_source());
+        assert!(!layer.is_runtime());
+        assert!(!layer.is_module());
+    }
+
+    #[test]
+    fn test_module_with_source_layer() {
+        let wasm = b"wasm code".to_vec();
+        let source = b"source tar".to_vec();
+
+        let module = FabricksModule::new(test_config(), wasm.clone())
+            .with_source_layer(source.clone());
+
+        assert_eq!(module.layer_count(), 2);
+        assert!(module.has_source_layers());
+        assert_eq!(module.source_layers().len(), 1);
+        assert_eq!(module.source_layers()[0].data, source);
+    }
+
+    #[test]
+    fn test_interpreted_module() {
+        let runtime = b"python runtime wasm".to_vec();
+        let source = b"user python source".to_vec();
+
+        let module = FabricksModule::new_interpreted(test_config(), runtime.clone(), source.clone());
+
+        assert_eq!(module.layer_count(), 2);
+        assert!(module.has_runtime_layer());
+        assert!(module.has_source_layers());
+
+        // Runtime should be first
+        let layers = module.layers();
+        assert!(layers[0].is_runtime());
+        assert_eq!(layers[0].data, runtime);
+
+        // Source should be second
+        assert!(layers[1].is_source());
+        assert_eq!(layers[1].data, source);
+
+        // No WASM module layer
+        assert!(module.module_layer().is_none());
+    }
+
+    #[test]
+    fn test_multiple_source_layers() {
+        let runtime = b"runtime".to_vec();
+        let source1 = b"base framework".to_vec();
+        let source2 = b"user app".to_vec();
+
+        let module = FabricksModule::new_interpreted(test_config(), runtime, source1.clone())
+            .with_source_layer(source2.clone());
+
+        assert_eq!(module.layer_count(), 3);
+        assert_eq!(module.source_layers().len(), 2);
+
+        // Source layers in order
+        let sources = module.source_layers();
+        assert_eq!(sources[0].data, source1);
+        assert_eq!(sources[1].data, source2);
     }
 }

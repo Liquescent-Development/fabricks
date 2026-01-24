@@ -21,25 +21,25 @@ description = "Python 3.12 HTTP runtime for Fabricks - bundles CPython interpret
 authors = ["Fabricks Team"]
 license = "Apache-2.0"
 
-# This runtime is built from source using componentize-py
-[from]
-source = "rust"
+# Note: This runtime is built using componentize-py (no [from] section needed)
+# The build command below handles everything
 
-[source]
-path = "."
 
 [build]
 # The Python runtime uses componentize-py to bundle CPython + our HTTP framework
 # This requires componentize-py to be installed: pip install componentize-py
+# Use: mise exec -- uv run componentize-py ...
 command = """
-componentize-py \
+mise exec -- uv run componentize-py \
     --wit-path wit \
     --world http-handler \
+    --world-module http_handler \
     componentize \
-    src \
-    -o python_runtime.wasm
+    -p src \
+    handler \
+    -o python-runtime.wasm
 """
-output = "python_runtime.wasm"
+output = "python-runtime.wasm"
 
 [capabilities.network]
 listen = [8080]

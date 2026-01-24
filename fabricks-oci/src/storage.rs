@@ -619,6 +619,44 @@ impl LocalStorage {
         self.get_layer_by_media_type(reference, media_types::WASM_LAYER_MEDIA_TYPE)
             .await
     }
+
+    /// Get all source layers from a stored module.
+    ///
+    /// Returns source layers in order (for proper overlay stacking).
+    ///
+    /// # Arguments
+    ///
+    /// * `reference` - The image reference tag
+    ///
+    /// # Returns
+    ///
+    /// Vector of source layer data (gzipped tar files).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the reference doesn't exist or loading fails.
+    pub async fn get_source_layers(&self, reference: &str) -> Result<Vec<Vec<u8>>> {
+        // Get manifest digest
+        let manifest_digest = self.get_manifest_digest(reference).await?;
+
+        // Load and parse manifest
+        let manifest_bytes = self.get_blob(&manifest_digest).await?;
+        let manifest: OciManifest =
+            serde_json::from_slice(&manifest_bytes).map_err(|e| OciError::StorageError {
+                reason: format!("failed to parse manifest: {e}"),
+            })?;
+
+        // Collect all source layers in order
+        let mut source_layers = Vec::new();
+        for layer_desc in &manifest.layers {
+            if media_types::is_source_layer(&layer_desc.media_type) {
+                let layer_data = self.get_blob(&layer_desc.digest).await?;
+                source_layers.push(layer_data);
+            }
+        }
+
+        Ok(source_layers)
+    }
 }
 
 /// OCI manifest structure for Fabricks modules.

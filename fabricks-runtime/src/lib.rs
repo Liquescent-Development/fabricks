@@ -52,8 +52,8 @@ pub mod tcp;
 // Re-export main types
 pub use error::{Result, RuntimeError};
 pub use http::{
-    HttpRequest, HttpResponse, HttpRuntime, HttpRuntimeConfig, OutboundHandler, Scheme,
-    WasiHttpState,
+    DenyAllOutbound, HttpRequest, HttpResponse, HttpRuntime, HttpRuntimeConfig, OutboundHandler,
+    Scheme, WasiHttpState,
 };
 pub use limits::ResourceLimits;
 pub use pool::{RuntimePool, RuntimePoolBuilder};

@@ -10,8 +10,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::response::ApiResponse;
 use crate::error::DaemonError;
+use crate::network::NetworkConfig;
 use crate::service::{ServiceConfig, ServiceDetail, ServiceInfo};
 use crate::state::AppState;
+use crate::volume::VolumeMount;
+use fabricks_common::models::Replicas;
 
 /// Request to create a service.
 #[derive(Debug, Deserialize)]
@@ -53,6 +56,25 @@ pub struct RunFabrickfileRequest {
     /// Optional path to pre-built WASM.
     #[serde(default)]
     pub wasm_path: Option<PathBuf>,
+}
+
+/// Request to run a module by tag.
+#[derive(Debug, Deserialize)]
+pub struct RunModuleRequest {
+    /// Module reference (tag like "my-module:1.0.0").
+    pub reference: String,
+
+    /// Additional arguments to pass to the module.
+    #[serde(default)]
+    pub args: Vec<String>,
+
+    /// Environment variable overrides.
+    #[serde(default)]
+    pub env_vars: Vec<(String, String)>,
+
+    /// Whether to disable capability enforcement.
+    #[serde(default)]
+    pub no_capabilities: bool,
 }
 
 /// Request to scale a service.
@@ -126,6 +148,148 @@ pub async fn run_fabrickfile(
                     name: "unknown".to_string(),
                 })),
             }
+        }
+        Err(e) => Json(error_response(&e)),
+    }
+}
+
+/// POST `/v1/services/run-module`
+///
+/// Runs a module from OCI storage by tag/reference.
+/// This loads the module from local OCI storage, creates a service, and starts it.
+pub async fn run_module(
+    State(state): State<AppState>,
+    Json(req): Json<RunModuleRequest>,
+) -> Json<ApiResponse<CreateServiceResponse>> {
+    // Load module from OCI storage
+    let module = match state.oci_storage.load_module(&req.reference).await {
+        Ok(module) => module,
+        Err(e) => {
+            return Json(error_response(&DaemonError::ModuleNotFound {
+                reference: format!("{}: {e}", req.reference),
+            }));
+        }
+    };
+
+    // Get the config (Fabrickfile) from the module
+    let fabrickfile = module.config();
+
+    // Determine if this is an interpreted module (has runtime + source, no module layer)
+    let is_interpreted = module.has_runtime_layer() && module.has_source_layers();
+
+    // Get WASM bytes - for interpreted runtimes, use the runtime layer
+    let wasm_bytes = if is_interpreted {
+        match module.runtime_layer() {
+            Some(layer) => layer.data.as_slice(),
+            None => {
+                return Json(error_response(&DaemonError::OciStorageError(
+                    "interpreted module missing runtime layer".to_string(),
+                )));
+            }
+        }
+    } else {
+        module.wasm_bytes()
+    };
+
+    // Create a temp directory for module files
+    let temp_dir = std::env::temp_dir().join("fabricks-modules");
+    if let Err(e) = tokio::fs::create_dir_all(&temp_dir).await {
+        return Json(error_response(&DaemonError::IoError(e)));
+    }
+
+    let wasm_path = temp_dir.join(format!("{}.wasm", fabrickfile.info.name));
+    if let Err(e) = tokio::fs::write(&wasm_path, wasm_bytes).await {
+        return Json(error_response(&DaemonError::IoError(e)));
+    }
+
+    // For interpreted modules, extract source layers to /app mount point
+    let source_mount_path = if is_interpreted {
+        let app_dir = temp_dir.join(format!("{}-app", fabrickfile.info.name));
+        if let Err(e) = tokio::fs::create_dir_all(&app_dir).await {
+            return Json(error_response(&DaemonError::IoError(e)));
+        }
+
+        // Extract each source layer (they stack, later overrides earlier)
+        for source_layer in module.source_layers() {
+            if let Err(e) = extract_tar_gz(&source_layer.data, &app_dir).await {
+                return Json(error_response(&DaemonError::OciStorageError(format!(
+                    "failed to extract source layer: {e}"
+                ))));
+            }
+        }
+
+        Some(app_dir)
+    } else {
+        None
+    };
+
+    // Build environment from config and overrides
+    let mut environment = fabrickfile
+        .config
+        .as_ref()
+        .and_then(|c| c.environment.clone())
+        .unwrap_or_default();
+
+    // Apply environment overrides from request
+    for (key, value) in &req.env_vars {
+        environment.insert(key.clone(), value.clone());
+    }
+
+    // Compute digest
+    let digest = compute_digest(wasm_bytes);
+
+    // Build volume mounts for interpreted runtimes
+    let volumes = if let Some(ref app_dir) = source_mount_path {
+        vec![VolumeMount::read_only(
+            "app-source".to_string(),
+            "app-source".to_string(),
+            app_dir.clone(),
+            "/app".to_string(),
+        )]
+    } else {
+        Vec::new()
+    };
+
+    // Build service config
+    let config = ServiceConfig {
+        name: fabrickfile.info.name.clone(),
+        version: fabrickfile.info.version.clone(),
+        service_type: fabrickfile.info.service_type,
+        wasm_path,
+        wasm_digest: digest,
+        capabilities: if req.no_capabilities {
+            fabricks_common::Capabilities::default()
+        } else {
+            fabrickfile.capabilities.clone()
+        },
+        environment,
+        args: req.args.clone(),
+        resources: fabrickfile
+            .config
+            .as_ref()
+            .and_then(|c| c.resources.clone()),
+        replicas: Replicas::default(),
+        health_check: fabrickfile.health_check.clone(),
+        depends_on: Vec::new(),
+        networks: Vec::new(),
+        volumes,
+        mortar_project: None,
+    };
+
+    let manager = state.service_manager.write().await;
+
+    // Create and start the service
+    match manager.create_service(config).await {
+        Ok(id) => {
+            // Start the service
+            if let Err(e) = manager.start_service(&id).await {
+                return Json(error_response(&e));
+            }
+
+            Json(ApiResponse::success(CreateServiceResponse {
+                id,
+                name: fabrickfile.info.name.clone(),
+            }))
         }
         Err(e) => Json(error_response(&e)),
     }
@@ -233,6 +397,22 @@ fn compute_digest(bytes: &[u8]) -> String {
     format!("sha256:{}", hex::encode(result))
 }
 
+/// Extracts a gzipped tar archive to a directory.
+async fn extract_tar_gz(data: &[u8], dest: &std::path::Path) -> std::io::Result<()> {
+    use std::io::Cursor;
+    use flate2::read::GzDecoder;
+    use tar::Archive;
+
+    let cursor = Cursor::new(data);
+    let decoder = GzDecoder::new(cursor);
+    let mut archive = Archive::new(decoder);
+
+    // Extract to destination directory
+    archive.unpack(dest)?;
+
+    Ok(())
+}
+
 /// Converts a `DaemonError` to an API error response.
 fn error_response<T: serde::Serialize>(err: &DaemonError) -> ApiResponse<T> {
     let (code, message) = match err {
@@ -267,6 +447,10 @@ fn error_response<T: serde::Serialize>(err: &DaemonError) -> ApiResponse<T> {
         ),
         DaemonError::RuntimeError(e) => ("RUNTIME_ERROR", format!("Runtime error: {e}")),
         DaemonError::BuildError(msg) => ("BUILD_ERROR", format!("Build error: {msg}")),
+        DaemonError::ModuleNotFound { reference } => {
+            ("MODULE_NOT_FOUND", format!("Module not found: {reference}"))
+        }
+        DaemonError::OciStorageError(msg) => ("STORAGE_ERROR", format!("Storage error: {msg}")),
         _ => ("INTERNAL_ERROR", err.to_string()),
     };
 
