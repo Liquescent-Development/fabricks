@@ -2,8 +2,14 @@
 //!
 //! Implements the OCI Image Layout specification for storing pulled modules
 //! locally and providing cache functionality.
+//!
+//! ## Multi-Layer Support
+//!
+//! The storage supports multi-layer OCI manifests for base image composition.
+//! Each layer is stored as a content-addressed blob, enabling automatic
+//! deduplication of shared layers (e.g., runtime layers reused across modules).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -12,6 +18,8 @@ use tokio::io::AsyncWriteExt;
 
 use crate::digest::{compute_digest, verify_digest};
 use crate::error::{OciError, Result};
+use crate::media_types;
+use crate::module::{FabricksModule, ModuleLayer};
 
 /// OCI layout version.
 const OCI_LAYOUT_VERSION: &str = "1.0.0";
@@ -401,6 +409,289 @@ impl LocalStorage {
     pub fn path(&self) -> &Path {
         &self.base_path
     }
+
+    /// Store a `FabricksModule` with all its layers.
+    ///
+    /// This creates the proper OCI manifest structure with multiple layers
+    /// and stores everything in the content-addressed blob storage.
+    ///
+    /// # Arguments
+    ///
+    /// * `module` - The module to store
+    /// * `reference` - The image reference tag (e.g., "mymodule:1.0.0")
+    ///
+    /// # Returns
+    ///
+    /// The manifest digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if storing fails.
+    pub async fn store_module(&self, module: &FabricksModule, reference: &str) -> Result<String> {
+        // Store config blob
+        let config_bytes = module
+            .config_bytes()
+            .map_err(|e| OciError::StorageError {
+                reason: format!("failed to serialize config: {e}"),
+            })?;
+        let config_digest = self.store_blob(&config_bytes).await?;
+
+        // Store all layer blobs
+        let mut layer_descriptors = Vec::new();
+        for layer in module.layers() {
+            let layer_digest = self.store_blob(&layer.data).await?;
+            // Convert HashMap to BTreeMap for consistent JSON ordering
+            let annotations = layer
+                .annotations
+                .as_ref()
+                .map(|h| h.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+            layer_descriptors.push(LayerDescriptor {
+                media_type: layer.media_type.clone(),
+                digest: layer_digest,
+                size: i64::try_from(layer.data.len()).unwrap_or(i64::MAX),
+                annotations,
+            });
+        }
+
+        // Build manifest - convert HashMap annotations to BTreeMap
+        let manifest_annotations: BTreeMap<String, String> = module
+            .build_annotations()
+            .into_iter()
+            .collect();
+
+        let manifest = OciManifest {
+            schema_version: 2,
+            media_type: Some(media_types::MANIFEST_MEDIA_TYPE.to_string()),
+            artifact_type: Some(media_types::ARTIFACT_TYPE.to_string()),
+            config: ConfigDescriptor {
+                media_type: media_types::CONFIG_MEDIA_TYPE.to_string(),
+                digest: config_digest,
+                size: i64::try_from(config_bytes.len()).unwrap_or(i64::MAX),
+            },
+            layers: layer_descriptors,
+            annotations: Some(manifest_annotations),
+        };
+
+        let manifest_bytes =
+            serde_json::to_vec_pretty(&manifest).map_err(|e| OciError::StorageError {
+                reason: format!("failed to serialize manifest: {e}"),
+            })?;
+
+        let manifest_digest = self.store_blob(&manifest_bytes).await?;
+        let manifest_size = i64::try_from(manifest_bytes.len()).unwrap_or(i64::MAX);
+
+        // Add to index
+        self.add_to_index(reference, &manifest_digest, manifest_size)
+            .await?;
+
+        Ok(manifest_digest)
+    }
+
+    /// Load a `FabricksModule` from storage by reference.
+    ///
+    /// # Arguments
+    ///
+    /// * `reference` - The image reference tag (e.g., "mymodule:1.0.0")
+    ///
+    /// # Returns
+    ///
+    /// The loaded module with all its layers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the reference doesn't exist or loading fails.
+    pub async fn load_module(&self, reference: &str) -> Result<FabricksModule> {
+        // Get manifest digest
+        let manifest_digest = self.get_manifest_digest(reference).await?;
+
+        // Load and parse manifest
+        let manifest_bytes = self.get_blob(&manifest_digest).await?;
+        let manifest: OciManifest =
+            serde_json::from_slice(&manifest_bytes).map_err(|e| OciError::StorageError {
+                reason: format!("failed to parse manifest: {e}"),
+            })?;
+
+        // Load config
+        let config_bytes = self.get_blob(&manifest.config.digest).await?;
+        let config_str = std::str::from_utf8(&config_bytes).map_err(|e| OciError::StorageError {
+            reason: format!("config is not valid UTF-8: {e}"),
+        })?;
+        let config: fabricks_common::Fabrickfile =
+            toml::from_str(config_str).map_err(|e| OciError::StorageError {
+                reason: format!("failed to parse config TOML: {e}"),
+            })?;
+
+        // Load all layers
+        let mut layers = Vec::new();
+        for layer_desc in &manifest.layers {
+            let layer_data = self.get_blob(&layer_desc.digest).await?;
+            // Convert BTreeMap back to HashMap
+            let annotations: Option<HashMap<String, String>> = layer_desc
+                .annotations
+                .as_ref()
+                .map(|b| b.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+            layers.push(ModuleLayer {
+                media_type: layer_desc.media_type.clone(),
+                data: layer_data,
+                annotations,
+            });
+        }
+
+        Ok(FabricksModule::from_layers(config, layers))
+    }
+
+    /// Get a specific layer by media type from a stored manifest.
+    ///
+    /// # Arguments
+    ///
+    /// * `reference` - The image reference tag
+    /// * `media_type` - The media type to look for
+    ///
+    /// # Returns
+    ///
+    /// The layer data if found, None otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the reference doesn't exist or loading fails.
+    pub async fn get_layer_by_media_type(
+        &self,
+        reference: &str,
+        media_type: &str,
+    ) -> Result<Option<Vec<u8>>> {
+        // Get manifest digest
+        let manifest_digest = self.get_manifest_digest(reference).await?;
+
+        // Load and parse manifest
+        let manifest_bytes = self.get_blob(&manifest_digest).await?;
+        let manifest: OciManifest =
+            serde_json::from_slice(&manifest_bytes).map_err(|e| OciError::StorageError {
+                reason: format!("failed to parse manifest: {e}"),
+            })?;
+
+        // Find layer with matching media type
+        for layer_desc in &manifest.layers {
+            if layer_desc.media_type == media_type {
+                let layer_data = self.get_blob(&layer_desc.digest).await?;
+                return Ok(Some(layer_data));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Get the runtime layer from a stored module.
+    ///
+    /// Convenience method for retrieving the base runtime layer.
+    ///
+    /// # Arguments
+    ///
+    /// * `reference` - The image reference tag
+    ///
+    /// # Returns
+    ///
+    /// The runtime layer data if present.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the reference doesn't exist or loading fails.
+    pub async fn get_runtime_layer(&self, reference: &str) -> Result<Option<Vec<u8>>> {
+        self.get_layer_by_media_type(reference, media_types::RUNTIME_LAYER_MEDIA_TYPE)
+            .await
+    }
+
+    /// Get the module (user code) layer from a stored module.
+    ///
+    /// Convenience method for retrieving the main WASM module layer.
+    ///
+    /// # Arguments
+    ///
+    /// * `reference` - The image reference tag
+    ///
+    /// # Returns
+    ///
+    /// The module layer data if present.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the reference doesn't exist or loading fails.
+    pub async fn get_module_layer(&self, reference: &str) -> Result<Option<Vec<u8>>> {
+        self.get_layer_by_media_type(reference, media_types::WASM_LAYER_MEDIA_TYPE)
+            .await
+    }
+
+    /// Get all source layers from a stored module.
+    ///
+    /// Returns source layers in order (for proper overlay stacking).
+    ///
+    /// # Arguments
+    ///
+    /// * `reference` - The image reference tag
+    ///
+    /// # Returns
+    ///
+    /// Vector of source layer data (gzipped tar files).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the reference doesn't exist or loading fails.
+    pub async fn get_source_layers(&self, reference: &str) -> Result<Vec<Vec<u8>>> {
+        // Get manifest digest
+        let manifest_digest = self.get_manifest_digest(reference).await?;
+
+        // Load and parse manifest
+        let manifest_bytes = self.get_blob(&manifest_digest).await?;
+        let manifest: OciManifest =
+            serde_json::from_slice(&manifest_bytes).map_err(|e| OciError::StorageError {
+                reason: format!("failed to parse manifest: {e}"),
+            })?;
+
+        // Collect all source layers in order
+        let mut source_layers = Vec::new();
+        for layer_desc in &manifest.layers {
+            if media_types::is_source_layer(&layer_desc.media_type) {
+                let layer_data = self.get_blob(&layer_desc.digest).await?;
+                source_layers.push(layer_data);
+            }
+        }
+
+        Ok(source_layers)
+    }
+}
+
+/// OCI manifest structure for Fabricks modules.
+#[derive(Debug, Serialize, Deserialize)]
+struct OciManifest {
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    #[serde(rename = "mediaType", skip_serializing_if = "Option::is_none")]
+    media_type: Option<String>,
+    #[serde(rename = "artifactType", skip_serializing_if = "Option::is_none")]
+    artifact_type: Option<String>,
+    config: ConfigDescriptor,
+    layers: Vec<LayerDescriptor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    annotations: Option<BTreeMap<String, String>>,
+}
+
+/// Config descriptor in an OCI manifest.
+#[derive(Debug, Serialize, Deserialize)]
+struct ConfigDescriptor {
+    #[serde(rename = "mediaType")]
+    media_type: String,
+    digest: String,
+    size: i64,
+}
+
+/// Layer descriptor in an OCI manifest.
+#[derive(Debug, Serialize, Deserialize)]
+struct LayerDescriptor {
+    #[serde(rename = "mediaType")]
+    media_type: String,
+    digest: String,
+    size: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    annotations: Option<BTreeMap<String, String>>,
 }
 
 #[cfg(test)]

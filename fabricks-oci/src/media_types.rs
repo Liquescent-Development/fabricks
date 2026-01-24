@@ -12,8 +12,17 @@ pub const CONFIG_MEDIA_TYPE: &str = "application/vnd.fabricks.config.v1+toml";
 /// Media type for the WASM module layer.
 pub const WASM_LAYER_MEDIA_TYPE: &str = "application/vnd.fabricks.module.v1+wasm";
 
+/// Media type for the runtime/base image layer.
+/// Used for language runtimes (Python, JavaScript, etc.) that user code builds upon.
+pub const RUNTIME_LAYER_MEDIA_TYPE: &str = "application/vnd.fabricks.runtime.v1+wasm";
+
 /// Media type for static files layer (gzipped tar).
 pub const FILES_LAYER_MEDIA_TYPE: &str = "application/vnd.fabricks.files.v1.tar+gzip";
+
+/// Media type for source code layer (gzipped tar).
+/// Used for interpreted language source (Python, JavaScript, etc.) that runs on a runtime.
+/// These layers stack - later layers can override files from earlier layers.
+pub const SOURCE_LAYER_MEDIA_TYPE: &str = "application/vnd.fabricks.source.v1.tar+gzip";
 
 /// OCI manifest media type.
 pub const MANIFEST_MEDIA_TYPE: &str = "application/vnd.oci.image.manifest.v1+json";
@@ -60,6 +69,18 @@ pub fn is_fabricks_config(media_type: &str) -> bool {
     media_type == CONFIG_MEDIA_TYPE
 }
 
+/// Check if a media type is a source code layer.
+#[must_use]
+pub fn is_source_layer(media_type: &str) -> bool {
+    media_type == SOURCE_LAYER_MEDIA_TYPE
+}
+
+/// Check if a media type is a runtime layer.
+#[must_use]
+pub fn is_runtime_layer(media_type: &str) -> bool {
+    media_type == RUNTIME_LAYER_MEDIA_TYPE
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,5 +95,17 @@ mod tests {
     fn test_is_fabricks_config() {
         assert!(is_fabricks_config(CONFIG_MEDIA_TYPE));
         assert!(!is_fabricks_config("application/json"));
+    }
+
+    #[test]
+    fn test_is_source_layer() {
+        assert!(is_source_layer(SOURCE_LAYER_MEDIA_TYPE));
+        assert!(!is_source_layer(WASM_LAYER_MEDIA_TYPE));
+    }
+
+    #[test]
+    fn test_is_runtime_layer() {
+        assert!(is_runtime_layer(RUNTIME_LAYER_MEDIA_TYPE));
+        assert!(!is_runtime_layer(WASM_LAYER_MEDIA_TYPE));
     }
 }

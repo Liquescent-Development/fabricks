@@ -15,7 +15,7 @@ use tracing::{debug, info};
 use crate::digest::compute_digest;
 use crate::error::{OciError, Result};
 use crate::media_types;
-use crate::module::{FabricksModule, PulledModule};
+use crate::module::{FabricksModule, ModuleLayer, PulledModule};
 
 /// Configuration for the Fabricks OCI client.
 #[derive(Debug, Clone, Default)]
@@ -92,12 +92,25 @@ impl FabricksClient {
                 reason: e.to_string(),
             })?;
 
-        // Build layers
-        let layers = vec![ImageLayer {
-            data: module.wasm_bytes().to_vec(),
-            media_type: media_types::WASM_LAYER_MEDIA_TYPE.to_string(),
-            annotations: None,
-        }];
+        // Build layers from module - supports both single and multi-layer
+        let layers: Vec<ImageLayer> = module
+            .layers()
+            .iter()
+            .map(|l| {
+                // Convert HashMap annotations to BTreeMap
+                let annotations = l
+                    .annotations
+                    .as_ref()
+                    .map(|h| h.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+                ImageLayer {
+                    data: l.data.clone(),
+                    media_type: l.media_type.clone(),
+                    annotations,
+                }
+            })
+            .collect();
+
+        debug!("Pushing {} layer(s)", layers.len());
 
         // Build annotations
         let annotations = module.build_annotations();
@@ -165,21 +178,36 @@ impl FabricksClient {
             }
         };
 
-        // Find WASM layer
-        let wasm_layer = image_manifest
-            .layers
-            .iter()
-            .find(|l| media_types::is_fabricks_module(&l.media_type))
-            .ok_or_else(|| OciError::InvalidModule {
-                reason: "no WASM layer found".to_string(),
-            })?;
+        // Pull all layers (supports both single and multi-layer manifests)
+        debug!("Pulling {} layer(s)", image_manifest.layers.len());
+        let mut layers = Vec::new();
 
-        // Pull WASM blob
-        debug!("Pulling WASM layer: {}", wasm_layer.digest);
-        let mut wasm_bytes = Vec::new();
-        self.client
-            .pull_blob(reference, wasm_layer, &mut wasm_bytes)
-            .await?;
+        for layer_desc in &image_manifest.layers {
+            debug!("Pulling layer: {} ({})", layer_desc.digest, layer_desc.media_type);
+            let mut layer_data = Vec::new();
+            self.client
+                .pull_blob(reference, layer_desc, &mut layer_data)
+                .await?;
+
+            // Convert BTreeMap annotations to HashMap
+            let annotations = layer_desc
+                .annotations
+                .as_ref()
+                .map(|b| b.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+
+            layers.push(ModuleLayer {
+                media_type: layer_desc.media_type.clone(),
+                data: layer_data,
+                annotations,
+            });
+        }
+
+        // Verify we have at least one WASM layer
+        if !layers.iter().any(|l| l.is_module() || l.is_runtime()) {
+            return Err(OciError::InvalidModule {
+                reason: "no WASM layer found".to_string(),
+            });
+        }
 
         // Pull config blob
         debug!("Pulling config: {}", image_manifest.config.digest);
@@ -191,7 +219,8 @@ impl FabricksClient {
         // Parse config
         let config = parse_config(&config_bytes, &image_manifest)?;
 
-        let module = FabricksModule::new(config, wasm_bytes);
+        // Create module with all layers
+        let module = FabricksModule::from_layers(config, layers);
 
         Ok(PulledModule { module, digest })
     }

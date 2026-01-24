@@ -1,0 +1,21 @@
+package fabricks:test-runtime;
+
+/// A simple utility interface exported by the test runtime.
+/// User code can import this to access runtime functionality.
+interface utils {
+    /// Get a greeting message.
+    greet: func(name: string) -> string;
+
+    /// Get the runtime version.
+    version: func() -> string;
+}
+
+/// The test runtime world - provides both HTTP handling
+/// and utility exports for user code.
+world test-runtime {
+    // Include WASI HTTP proxy for HTTP handling
+    include wasi:http/proxy@0.2.9;
+
+    // Export our utility interface for user code
+    export utils;
+}

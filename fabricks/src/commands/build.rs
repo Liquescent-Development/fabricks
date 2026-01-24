@@ -1,18 +1,56 @@
 //! Build command implementation.
 //!
-//! Compiles a Fabrickfile into a WASM module and stores it locally.
+//! Compiles or packages a Fabrickfile into an OCI image and stores it locally.
+//!
+//! ## Two Build Models
+//!
+//! Fabricks supports two distinct build models:
+//!
+//! ### Compiled Languages (Rust, Go, etc.)
+//!
+//! User code is compiled to WASM:
+//! - Uses language builders (cargo-component, tinygo, etc.)
+//! - Or custom `[build].command`
+//! - Optionally composes with a base runtime via wac-graph
+//!
+//! ### Interpreted Languages (Python, JavaScript, etc.)
+//!
+//! User code stays as source files:
+//! - Pre-built runtime is pulled from registry
+//! - Source files are packaged as a tar layer
+//! - No compilation needed
+//!
+//! ## Build Mode Detection
+//!
+//! The build mode is determined by the Fabrickfile:
+//!
+//! 1. `[from].source = "python"` (no `[build]` section) → Interpreted mode
+//! 2. `[from].source = "rust"` → Compiled mode with Rust builder
+//! 3. `[build].command` specified → Custom build mode
+//! 4. `[from].image` specified → Base image composition mode
 
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
+use fabricks_common::models::fabrickfile::SourceLanguage;
 use fabricks_common::parser::FABRICKFILE_NAME;
 use fabricks_common::{Fabrickfile, parse_fabrickfile};
-use fabricks_oci::{FabricksModule, LocalStorage};
-use tracing::{debug, info};
+use fabricks_oci::{FabricksModule, LocalStorage, media_types};
+use flate2::Compression;
+use flate2::write::GzEncoder;
+use tracing::{debug, info, warn};
 
+use crate::builders::{BuilderConfig, build_with_source};
 use crate::cli::{BuildArgs, OutputFormat};
 use crate::output::writeln_stderr;
+
+/// Interpreted languages that use the source-layer model.
+const INTERPRETED_LANGUAGES: &[SourceLanguage] = &[
+    SourceLanguage::Python,
+    SourceLanguage::Javascript,
+];
 
 /// Run the build command.
 ///
@@ -35,16 +73,14 @@ pub async fn run(args: &BuildArgs) -> Result<()> {
         fabrickfile.info.name, fabrickfile.info.version
     );
 
-    // Run build command unless --no-build is specified
-    if !args.no_build {
-        run_build_command(&fabrickfile, workdir)?;
-    }
+    let storage = get_local_storage().await?;
 
-    // Read the WASM output
-    let wasm_bytes = read_wasm_output(&fabrickfile, workdir)?;
-
-    // Create the module
-    let module = FabricksModule::new(fabrickfile.clone(), wasm_bytes);
+    // Determine build mode and create module
+    let module = if is_interpreted_language(&fabrickfile) {
+        build_interpreted(&fabrickfile, workdir, &storage, args).await?
+    } else {
+        build_compiled(&fabrickfile, workdir, &storage, args).await?
+    };
 
     // Determine the tag
     let tag = args
@@ -53,30 +89,285 @@ pub async fn run(args: &BuildArgs) -> Result<()> {
         .unwrap_or_else(|| format!("{}:{}", fabrickfile.info.name, fabrickfile.info.version));
 
     // Store locally
-    let storage = get_local_storage().await?;
-    store_module(&storage, &module, &tag).await?;
+    storage
+        .store_module(&module, &tag)
+        .await
+        .context("Failed to store module")?;
 
     // Output result
-    match args.format {
-        OutputFormat::Text => {
-            writeln_stderr(&format!("✓ Built {tag}"))?;
-            writeln_stderr(&format!("  WASM size: {} bytes", module.wasm_size()))?;
-            writeln_stderr(&format!("  Digest: {}", module.wasm_digest()))?;
+    output_build_result(&module, &tag, args)?;
+
+    Ok(())
+}
+
+/// Check if the Fabrickfile specifies an interpreted language.
+fn is_interpreted_language(fabrickfile: &Fabrickfile) -> bool {
+    fabrickfile
+        .from
+        .as_ref()
+        .and_then(|from| from.source.as_ref())
+        .is_some_and(|lang| INTERPRETED_LANGUAGES.contains(lang))
+        && fabrickfile.build.is_none() // No custom build = interpreted mode
+}
+
+/// Build for interpreted languages (Python, JavaScript, etc.).
+///
+/// This packages source files as a layer without compilation.
+async fn build_interpreted(
+    fabrickfile: &Fabrickfile,
+    workdir: &Path,
+    storage: &LocalStorage,
+    _args: &BuildArgs,
+) -> Result<FabricksModule> {
+    let from = fabrickfile
+        .from
+        .as_ref()
+        .context("Interpreted build requires [from] section")?;
+
+    let language = from
+        .source
+        .as_ref()
+        .context("Interpreted build requires [from].source")?;
+
+    let version = from.version.as_deref().unwrap_or("latest");
+
+    info!(
+        "Building interpreted {:?} application (no compilation)",
+        language
+    );
+
+    // Determine the runtime image reference
+    let runtime_ref = get_runtime_image_ref(*language, version);
+    info!("Using runtime: {runtime_ref}");
+
+    // Load the pre-built runtime
+    let runtime_wasm = load_runtime_image(storage, &runtime_ref).await?;
+
+    // Package source files
+    let source = fabrickfile
+        .source
+        .as_ref()
+        .context("Interpreted build requires [source] section")?;
+
+    let source_path = workdir.join(&source.path);
+    info!("Packaging source files from {}", source_path.display());
+
+    let source_tar = package_source_files(&source_path, fabrickfile)?;
+    info!("Packaged {} bytes of source files", source_tar.len());
+
+    // Create the interpreted module (runtime + source layers)
+    Ok(FabricksModule::new_interpreted(
+        fabrickfile.clone(),
+        runtime_wasm,
+        source_tar,
+    ))
+}
+
+/// Build for compiled languages (Rust, Go, etc.) or custom builds.
+async fn build_compiled(
+    fabrickfile: &Fabrickfile,
+    workdir: &Path,
+    storage: &LocalStorage,
+    args: &BuildArgs,
+) -> Result<FabricksModule> {
+    // Handle base image if specified
+    let base_layer = if let Some(ref from) = fabrickfile.from {
+        if let Some(ref image_ref) = from.image {
+            info!("Loading base image: {image_ref}");
+            Some(load_base_image(storage, image_ref).await?)
+        } else {
+            None
         }
-        OutputFormat::Json => {
-            let output = serde_json::json!({
-                "success": true,
-                "tag": tag,
-                "name": module.name(),
-                "version": module.version(),
-                "wasm_size": module.wasm_size(),
-                "wasm_digest": module.wasm_digest(),
-            });
-            writeln_stderr(&serde_json::to_string_pretty(&output)?)?;
+    } else {
+        None
+    };
+
+    // Build the WASM output
+    let wasm_bytes = if args.no_build {
+        // --no-build: just read the existing output
+        read_wasm_output(fabrickfile, workdir)?
+    } else {
+        build_wasm(fabrickfile, workdir)?
+    };
+
+    // Create the module, optionally with base layer
+    if let Some(runtime_wasm) = base_layer {
+        info!("Composing with base runtime layer");
+        Ok(FabricksModule::new(fabrickfile.clone(), wasm_bytes).with_runtime_layer(runtime_wasm))
+    } else {
+        Ok(FabricksModule::new(fabrickfile.clone(), wasm_bytes))
+    }
+}
+
+/// Get the runtime image reference for a language.
+fn get_runtime_image_ref(language: SourceLanguage, version: &str) -> String {
+    let lang_name = match language {
+        SourceLanguage::Python => "python",
+        SourceLanguage::Javascript => "javascript",
+        SourceLanguage::Rust => "rust",
+        SourceLanguage::Go => "go",
+        SourceLanguage::Csharp => "dotnet",
+    };
+
+    format!("fabricks.dev/runtimes/{lang_name}:{version}")
+}
+
+/// Load the pre-built runtime image.
+async fn load_runtime_image(storage: &LocalStorage, runtime_ref: &str) -> Result<Vec<u8>> {
+    debug!("Looking for runtime image: {runtime_ref}");
+
+    // Try to get the runtime layer from local storage
+    match storage
+        .get_layer_by_media_type(runtime_ref, media_types::RUNTIME_LAYER_MEDIA_TYPE)
+        .await
+    {
+        Ok(Some(layer)) => {
+            debug!("Found runtime in local cache ({} bytes)", layer.len());
+            return Ok(layer);
+        }
+        Ok(None) => {
+            debug!("No runtime layer, trying module layer");
+        }
+        Err(e) => {
+            debug!("Runtime not in local cache: {e}");
+        }
+    }
+
+    // Try the module layer as fallback (some runtimes may be stored this way)
+    match storage
+        .get_layer_by_media_type(runtime_ref, media_types::WASM_LAYER_MEDIA_TYPE)
+        .await
+    {
+        Ok(Some(layer)) => {
+            warn!("Using module layer as runtime for '{runtime_ref}'");
+            Ok(layer)
+        }
+        Ok(None) => {
+            bail!(
+                "Runtime '{runtime_ref}' not found in local storage.\n\n\
+                 To fix this, either:\n\
+                 1. Pull the runtime: fabricks pull {runtime_ref}\n\
+                 2. Build the runtime locally from examples/runtimes/"
+            );
+        }
+        Err(e) => {
+            bail!("Failed to load runtime '{runtime_ref}': {e}");
+        }
+    }
+}
+
+/// Package source files into a gzipped tar archive.
+fn package_source_files(source_path: &Path, fabrickfile: &Fabrickfile) -> Result<Vec<u8>> {
+    if !source_path.exists() {
+        bail!("Source path does not exist: {}", source_path.display());
+    }
+
+    // Create tar.gz in memory
+    let mut tar_gz_bytes = Vec::new();
+    {
+        let encoder = GzEncoder::new(&mut tar_gz_bytes, Compression::default());
+        let mut tar_builder = tar::Builder::new(encoder);
+
+        // Add all files from source directory
+        if source_path.is_dir() {
+            add_directory_to_tar(&mut tar_builder, source_path, Path::new(""))?;
+        } else {
+            // Single file
+            tar_builder
+                .append_path_with_name(source_path, source_path.file_name().unwrap_or_default())
+                .context("Failed to add file to tar")?;
+        }
+
+        // Add entrypoint config file (.fabricks.toml)
+        let entrypoint_config = create_entrypoint_config(fabrickfile);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(entrypoint_config.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        tar_builder
+            .append_data(&mut header, ".fabricks.toml", entrypoint_config.as_bytes())
+            .context("Failed to add entrypoint config to tar")?;
+
+        // Finish the tar
+        let encoder = tar_builder.into_inner().context("Failed to finish tar")?;
+        encoder.finish().context("Failed to finish gzip")?;
+    }
+
+    Ok(tar_gz_bytes)
+}
+
+/// Add a directory recursively to the tar archive.
+fn add_directory_to_tar<W: Write>(
+    tar_builder: &mut tar::Builder<W>,
+    dir_path: &Path,
+    prefix: &Path,
+) -> Result<()> {
+    for entry in std::fs::read_dir(dir_path).context("Failed to read source directory")? {
+        let entry = entry.context("Failed to read directory entry")?;
+        let path = entry.path();
+        let name = prefix.join(entry.file_name());
+
+        // Skip common unwanted files/directories
+        let file_name = entry.file_name();
+        let file_name_str = file_name.to_string_lossy();
+        if file_name_str.starts_with('.')
+            || file_name_str == "__pycache__"
+            || file_name_str == "node_modules"
+            || file_name_str == "target"
+            || file_name_str == ".git"
+            || file_name_str == ".venv"
+            || file_name_str.ends_with(".wasm")
+        {
+            continue;
+        }
+
+        if path.is_dir() {
+            add_directory_to_tar(tar_builder, &path, &name)?;
+        } else {
+            tar_builder
+                .append_path_with_name(&path, &name)
+                .with_context(|| format!("Failed to add {} to tar", path.display()))?;
         }
     }
 
     Ok(())
+}
+
+/// Create the entrypoint configuration file content.
+fn create_entrypoint_config(fabrickfile: &Fabrickfile) -> String {
+    let entrypoint = fabrickfile
+        .source
+        .as_ref()
+        .and_then(|s| s.entrypoint.as_ref())
+        .map_or("app:handler", String::as_str);
+
+    format!("# Generated by fabricks build\nentrypoint = \"{entrypoint}\"\n")
+}
+
+/// Build WASM output using the appropriate method.
+fn build_wasm(fabrickfile: &Fabrickfile, workdir: &Path) -> Result<Vec<u8>> {
+    // Check if we should use a language builder
+    let use_builder = fabrickfile
+        .from
+        .as_ref()
+        .is_some_and(|from| from.source.is_some());
+
+    if use_builder {
+        // Use language builder
+        info!("Using language builder");
+        let config = BuilderConfig {
+            fabrickfile,
+            workdir,
+            release: true,
+        };
+
+        let output = build_with_source(&config)?;
+        std::fs::read(&output.wasm_path).context("Failed to read built WASM file")
+    } else {
+        // Use custom build command
+        run_build_command(fabrickfile, workdir)?;
+        read_wasm_output(fabrickfile, workdir)
+    }
 }
 
 /// Find the Fabrickfile, returning its path and parsed content.
@@ -104,7 +395,6 @@ fn run_build_command(fabrickfile: &Fabrickfile, workdir: &Path) -> Result<()> {
         .as_ref()
         .context("Fabrickfile has no [build] section")?;
 
-    // Determine the actual working directory
     let actual_workdir = if let Some(ref build_workdir) = build.workdir {
         workdir.join(build_workdir)
     } else {
@@ -114,13 +404,11 @@ fn run_build_command(fabrickfile: &Fabrickfile, workdir: &Path) -> Result<()> {
     debug!("Running build command in {}", actual_workdir.display());
     debug!("Command: {}", build.command);
 
-    // Build environment
     let mut cmd = Command::new("sh");
     cmd.arg("-c")
         .arg(&build.command)
         .current_dir(&actual_workdir);
 
-    // Add build environment variables
     if let Some(ref environment) = build.environment {
         for (key, value) in environment {
             cmd.env(key, value);
@@ -151,7 +439,6 @@ fn read_wasm_output(fabrickfile: &Fabrickfile, workdir: &Path) -> Result<Vec<u8>
         .as_ref()
         .context("Fabrickfile has no [build] section")?;
 
-    // Determine the actual working directory for output
     let actual_workdir = if let Some(ref build_workdir) = build.workdir {
         workdir.join(build_workdir)
     } else {
@@ -186,73 +473,84 @@ async fn get_local_storage() -> Result<LocalStorage> {
         .context("Failed to initialize local storage")
 }
 
-/// Store a module in local storage.
-async fn store_module(storage: &LocalStorage, module: &FabricksModule, tag: &str) -> Result<()> {
-    // Store config blob
-    let config_bytes = module
-        .config_bytes()
-        .context("Failed to serialize config")?;
-    let config_digest = storage
-        .store_blob(&config_bytes)
-        .await
-        .context("Failed to store config blob")?;
-    debug!("Stored config: {config_digest}");
+/// Load a base image from local storage.
+async fn load_base_image(storage: &LocalStorage, image_ref: &str) -> Result<Vec<u8>> {
+    debug!("Looking for base image in local storage: {image_ref}");
 
-    // Store WASM blob
-    let wasm_digest = storage
-        .store_blob(module.wasm_bytes())
+    match storage
+        .get_layer_by_media_type(image_ref, media_types::RUNTIME_LAYER_MEDIA_TYPE)
         .await
-        .context("Failed to store WASM blob")?;
-    debug!("Stored WASM: {wasm_digest}");
+    {
+        Ok(Some(layer)) => {
+            debug!("Found runtime layer in local cache ({} bytes)", layer.len());
+            return Ok(layer);
+        }
+        Ok(None) => {
+            debug!("No runtime layer, trying module layer as base");
+        }
+        Err(e) => {
+            debug!("Base image not in local cache: {e}");
+        }
+    }
 
-    // Build and store manifest
-    let manifest = build_local_manifest(module, &config_digest, &wasm_digest);
-    let manifest_bytes =
-        serde_json::to_vec_pretty(&manifest).context("Failed to serialize manifest")?;
-    let manifest_digest = storage
-        .store_blob(&manifest_bytes)
+    match storage
+        .get_layer_by_media_type(image_ref, media_types::WASM_LAYER_MEDIA_TYPE)
         .await
-        .context("Failed to store manifest")?;
-    debug!("Stored manifest: {manifest_digest}");
-
-    // Add to index
-    storage
-        .add_to_index(
-            tag,
-            &manifest_digest,
-            i64::try_from(manifest_bytes.len()).unwrap_or(i64::MAX),
-        )
-        .await
-        .context("Failed to update storage index")?;
-
-    Ok(())
+    {
+        Ok(Some(layer)) => {
+            warn!(
+                "Using module layer as runtime (base image '{}' has no dedicated runtime layer)",
+                image_ref
+            );
+            Ok(layer)
+        }
+        Ok(None) => {
+            bail!(
+                "Base image '{image_ref}' not found in local storage.\n\
+                 Run 'fabricks pull {image_ref}' first, or build the base image locally."
+            );
+        }
+        Err(e) => {
+            bail!(
+                "Failed to load base image '{image_ref}': {e}\n\
+                 Run 'fabricks pull {image_ref}' first."
+            );
+        }
+    }
 }
 
-/// Build a local manifest for storage.
-fn build_local_manifest(
-    module: &FabricksModule,
-    config_digest: &str,
-    wasm_digest: &str,
-) -> serde_json::Value {
-    let config_bytes = module.config_bytes().unwrap_or_default();
-    let annotations = module.build_annotations();
+/// Output the build result.
+fn output_build_result(module: &FabricksModule, tag: &str, args: &BuildArgs) -> Result<()> {
+    match args.format {
+        OutputFormat::Text => {
+            writeln_stderr(&format!("✓ Built {tag}"))?;
+            writeln_stderr(&format!("  Layers: {}", module.layer_count()))?;
+            if module.has_runtime_layer() {
+                writeln_stderr("  Type: Interpreted (runtime + source)")?;
+            } else if module.has_source_layers() {
+                writeln_stderr("  Type: Source layers only")?;
+            } else {
+                writeln_stderr("  Type: Compiled WASM")?;
+                writeln_stderr(&format!("  WASM size: {} bytes", module.wasm_size()))?;
+            }
+            writeln_stderr(&format!("  Total size: {} bytes", module.total_size()))?;
+        }
+        OutputFormat::Json => {
+            let output = serde_json::json!({
+                "success": true,
+                "tag": tag,
+                "name": module.name(),
+                "version": module.version(),
+                "layer_count": module.layer_count(),
+                "has_runtime_layer": module.has_runtime_layer(),
+                "has_source_layers": module.has_source_layers(),
+                "total_size": module.total_size(),
+            });
+            writeln_stderr(&serde_json::to_string_pretty(&output)?)?;
+        }
+    }
 
-    serde_json::json!({
-        "schemaVersion": 2,
-        "mediaType": "application/vnd.oci.image.manifest.v1+json",
-        "artifactType": "application/vnd.fabricks.module.v1",
-        "config": {
-            "mediaType": "application/vnd.fabricks.config.v1+toml",
-            "digest": config_digest,
-            "size": config_bytes.len(),
-        },
-        "layers": [{
-            "mediaType": "application/vnd.fabricks.module.v1+wasm",
-            "digest": wasm_digest,
-            "size": module.wasm_size(),
-        }],
-        "annotations": annotations,
-    })
+    Ok(())
 }
 
 #[cfg(test)]
@@ -387,24 +685,6 @@ mod tests {
     }
 
     #[test]
-    fn test_build_local_manifest() {
-        let fabrickfile = test_fabrickfile();
-        let wasm = vec![0x00, 0x61, 0x73, 0x6d];
-        let module = FabricksModule::new(fabrickfile, wasm);
-
-        let manifest = build_local_manifest(&module, "sha256:config123", "sha256:wasm456");
-
-        assert_eq!(manifest["schemaVersion"], 2);
-        assert_eq!(
-            manifest["mediaType"],
-            "application/vnd.oci.image.manifest.v1+json"
-        );
-        assert_eq!(manifest["config"]["digest"], "sha256:config123");
-        assert_eq!(manifest["layers"][0]["digest"], "sha256:wasm456");
-        assert_eq!(manifest["layers"][0]["size"], 4);
-    }
-
-    #[test]
     fn test_run_build_command_no_build_section() {
         let temp = TempDir::new().expect("create temp dir");
         let mut fabrickfile = test_fabrickfile();
@@ -439,5 +719,66 @@ mod tests {
         let result = run_build_command(&fabrickfile, temp.path());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("failed"));
+    }
+
+    #[test]
+    fn test_package_source_files() {
+        let temp = TempDir::new().expect("create temp dir");
+
+        // Create test files
+        std::fs::write(temp.path().join("app.py"), "def handler(r): pass").expect("write");
+        std::fs::write(temp.path().join("utils.py"), "# utils").expect("write");
+
+        let fabrickfile = test_fabrickfile();
+        let tar_bytes = package_source_files(temp.path(), &fabrickfile).expect("package");
+
+        // Verify it's valid gzip
+        assert!(tar_bytes.len() > 0);
+        assert_eq!(tar_bytes[0], 0x1f); // gzip magic
+        assert_eq!(tar_bytes[1], 0x8b);
+    }
+
+    #[test]
+    fn test_create_entrypoint_config() {
+        let fabrickfile = test_fabrickfile();
+        let config = create_entrypoint_config(&fabrickfile);
+
+        assert!(config.contains("entrypoint"));
+        assert!(config.contains("app:handler")); // default
+    }
+
+    #[test]
+    fn test_is_interpreted_language() {
+        use fabricks_common::models::fabrickfile::{From, Source};
+
+        let mut fabrickfile = test_fabrickfile();
+
+        // No from section = not interpreted
+        assert!(!is_interpreted_language(&fabrickfile));
+
+        // Python with no build = interpreted
+        fabrickfile.from = Some(From {
+            source: Some(SourceLanguage::Python),
+            image: None,
+            version: Some("3.12".to_string()),
+            path: None,
+        });
+        fabrickfile.source = Some(Source {
+            path: ".".to_string(),
+            entrypoint: Some("app:handler".to_string()),
+            include: None,
+            exclude: None,
+        });
+        fabrickfile.build = None;
+        assert!(is_interpreted_language(&fabrickfile));
+
+        // Rust = not interpreted (even without build)
+        fabrickfile.from = Some(From {
+            source: Some(SourceLanguage::Rust),
+            image: None,
+            version: None,
+            path: None,
+        });
+        assert!(!is_interpreted_language(&fabrickfile));
     }
 }

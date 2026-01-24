@@ -1,0 +1,13 @@
+// Fabricks Python HTTP Handler World
+//
+// This defines the interface for Python HTTP applications.
+// The runtime implements wasi:http/incoming-handler to serve requests.
+
+package fabricks:python-runtime@3.12.0;
+
+world http-handler {
+    // Include the WASI HTTP proxy world which provides:
+    // - wasi:http/incoming-handler (export) - handle incoming HTTP requests
+    // - wasi:http/outgoing-handler (import) - make outgoing HTTP requests
+    include wasi:http/proxy@0.2.0;
+}

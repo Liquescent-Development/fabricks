@@ -180,6 +180,17 @@ pub enum DaemonError {
         path: String,
     },
 
+    /// Module not found in OCI storage.
+    #[error("module not found in storage: {reference}")]
+    ModuleNotFound {
+        /// Module reference (tag).
+        reference: String,
+    },
+
+    /// OCI storage error.
+    #[error("OCI storage error: {0}")]
+    OciStorageError(String),
+
     /// Port already bound.
     #[error("port {port} is already bound to service '{service_id}'")]
     PortAlreadyBound {

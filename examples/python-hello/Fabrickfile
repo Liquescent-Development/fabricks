@@ -1,0 +1,26 @@
+# Python Hello World
+#
+# A simple Python HTTP service - no WASM knowledge required!
+#
+# Just write Python and run: fabricks build && fabricks run
+
+fabrick_version = "1.0"
+
+[info]
+name = "python-hello"
+version = "1.0.0"
+type = "http"
+description = "A simple Python HTTP service"
+
+# Use the Python runtime - Fabricks handles everything else
+[from]
+source = "python"
+version = "3.12"
+
+# Point to your Python code
+[source]
+path = "."
+entrypoint = "app:handler"
+
+[capabilities.network]
+listen = [8088]

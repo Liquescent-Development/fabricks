@@ -1,0 +1,20 @@
+fabrick_version = "1.0"
+
+[info]
+name = "test-runtime"
+version = "1.0.0"
+type = "http"
+description = "Minimal runtime for testing multi-layer OCI support"
+
+[from]
+source = "rust"
+
+[source]
+path = "."
+
+[build]
+command = "cargo component build --release"
+output = "target/wasm32-wasip1/release/test_runtime.wasm"
+
+[capabilities.network]
+listen = [8080]

@@ -9,8 +9,9 @@ use tokio::sync::{RwLock, broadcast};
 use tracing::info;
 
 use crate::config::DaemonConfig;
-use crate::error::Result;
+use crate::error::{DaemonError, Result};
 use crate::events::EventBus;
+use fabricks_oci::LocalStorage;
 use crate::health::{HealthMonitor, HealthMonitorConfig};
 use crate::network::{NetworkManager, ServiceRegistry};
 use crate::policy::PolicyManager;
@@ -71,6 +72,9 @@ pub struct AppState {
     /// Policy manager for security policies.
     pub policy_manager: Arc<PolicyManager>,
 
+    /// OCI local storage for module images.
+    pub oci_storage: Arc<LocalStorage>,
+
     /// Shutdown signal sender.
     shutdown_tx: broadcast::Sender<()>,
 }
@@ -79,13 +83,13 @@ impl AppState {
     /// Creates a new application state.
     ///
     /// This initializes the database, state store, event bus, service manager,
-    /// network manager, proxy server, egress proxy, and health monitor.
+    /// network manager, proxy server, egress proxy, health monitor, and OCI storage.
     ///
     /// # Errors
     ///
     /// Returns an error if the data directory cannot be created, the
     /// database cannot be opened, or any component fails to initialize.
-    pub fn new(config: DaemonConfig) -> Result<Self> {
+    pub async fn new(config: DaemonConfig) -> Result<Self> {
         // Ensure data directory exists
         std::fs::create_dir_all(&config.daemon.data_dir)?;
 
@@ -165,6 +169,21 @@ impl AppState {
         // Create shutdown channel
         let (shutdown_tx, _) = broadcast::channel(1);
 
+        // Create OCI storage for module images
+        // Use ~/.fabricks/storage to share with CLI
+        let storage_path = dirs::home_dir()
+            .ok_or_else(|| DaemonError::IoError(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "could not determine home directory for OCI storage",
+            )))?
+            .join(".fabricks/storage");
+        let oci_storage = Arc::new(LocalStorage::new(storage_path).await.map_err(|e| {
+            DaemonError::IoError(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("failed to initialize OCI storage: {e}"),
+            ))
+        })?);
+
         Ok(Self {
             config: Arc::new(config),
             started_at: Instant::now(),
@@ -181,6 +200,7 @@ impl AppState {
             metrics_collector,
             auto_scaler,
             policy_manager,
+            oci_storage,
             shutdown_tx,
         })
     }
@@ -267,18 +287,18 @@ mod tests {
         config
     }
 
-    #[test]
-    fn test_app_state_creation() {
+    #[tokio::test]
+    async fn test_app_state_creation() {
         let config = create_test_config();
-        let state = AppState::new(config).expect("should create state");
+        let state = AppState::new(config).await.expect("should create state");
 
         assert!(state.uptime() < Duration::from_secs(1));
     }
 
-    #[test]
-    fn test_app_state_clone() {
+    #[tokio::test]
+    async fn test_app_state_clone() {
         let config = create_test_config();
-        let state = AppState::new(config).expect("should create state");
+        let state = AppState::new(config).await.expect("should create state");
 
         let cloned = state.clone();
         assert!(Arc::ptr_eq(&state.config, &cloned.config));
@@ -301,12 +321,13 @@ mod tests {
         ));
         assert!(Arc::ptr_eq(&state.auto_scaler, &cloned.auto_scaler));
         assert!(Arc::ptr_eq(&state.policy_manager, &cloned.policy_manager));
+        assert!(Arc::ptr_eq(&state.oci_storage, &cloned.oci_storage));
     }
 
     #[tokio::test]
     async fn test_shutdown_signal() {
         let config = create_test_config();
-        let state = AppState::new(config).expect("should create state");
+        let state = AppState::new(config).await.expect("should create state");
 
         let mut rx = state.subscribe_shutdown();
 

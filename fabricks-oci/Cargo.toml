@@ -24,6 +24,10 @@ fabricks-common = { path = "../fabricks-common" }
 # OCI registry client
 oci-client = { version = "0.15", default-features = false, features = ["rustls-tls"] }
 
+# WASM component composition (wac = WebAssembly Compositions)
+# See: https://github.com/bytecodealliance/wac
+wac-graph = "0.8"
+
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

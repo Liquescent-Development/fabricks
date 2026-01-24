@@ -195,6 +195,22 @@ pub struct RunFabrickfileRequest {
     pub wasm_path: Option<PathBuf>,
 }
 
+/// Run module request (by tag or registry reference).
+#[derive(Debug, serde::Serialize)]
+pub struct RunModuleRequest {
+    /// Module reference (tag like "my-module:1.0.0" or registry reference).
+    pub reference: String,
+    /// Additional arguments to pass to the module.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Environment variable overrides.
+    #[serde(default)]
+    pub env_vars: Vec<(String, String)>,
+    /// Whether to disable capability enforcement.
+    #[serde(default)]
+    pub no_capabilities: bool,
+}
+
 /// Scale service request.
 #[derive(Debug, serde::Serialize)]
 pub struct ScaleServiceRequest {
@@ -454,6 +470,11 @@ impl DaemonClient {
         req: RunFabrickfileRequest,
     ) -> Result<CreateServiceResponse> {
         self.post("/v1/services/run", &req).await
+    }
+
+    /// Runs a module by tag or registry reference through the daemon.
+    pub async fn run_module(&self, req: RunModuleRequest) -> Result<CreateServiceResponse> {
+        self.post("/v1/services/run-module", &req).await
     }
 
     /// Starts a service.

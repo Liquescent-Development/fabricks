@@ -50,7 +50,7 @@ impl PolicyEngine {
             // Check deny rules first
             if let Some(ref deny_rules) = policy.policy.deny {
                 for (idx, rule) in deny_rules.iter().enumerate() {
-                    if self.matches_deny_rule(rule, ctx, policy) {
+                    if Self::matches_deny_rule(rule, ctx, policy) {
                         let description = format!(
                             "deny rule {} in {}",
                             idx + 1,
@@ -71,7 +71,7 @@ impl PolicyEngine {
             // Check require rules
             if let Some(ref require_rules) = policy.policy.require {
                 for (idx, rule) in require_rules.iter().enumerate() {
-                    if let Some(reason) = self.check_require_rule(rule, ctx, policy) {
+                    if let Some(reason) = Self::check_require_rule(rule, ctx, policy) {
                         let description = format!(
                             "require rule {} in {}",
                             idx + 1,
@@ -88,7 +88,7 @@ impl PolicyEngine {
             // Check warn rules
             if let Some(ref warn_rules) = policy.policy.warn {
                 for (idx, rule) in warn_rules.iter().enumerate() {
-                    if let Some(reason) = self.matches_warn_rule(rule, ctx, policy) {
+                    if let Some(reason) = Self::matches_warn_rule(rule, ctx, policy) {
                         let description = format!(
                             "warn rule {} in {}",
                             idx + 1,
@@ -119,14 +119,13 @@ impl PolicyEngine {
 
     /// Checks if a deny rule matches the connection.
     fn matches_deny_rule(
-        &self,
         rule: &DenyRule,
         ctx: &PolicyEvaluationContext,
         policy: &EvaluatedPolicy,
     ) -> bool {
         // Check if source matches "from" (if specified)
         let from_matches = match &rule.from {
-            Some(froms) => self.matches_service_list(froms, &ctx.from_service, policy),
+            Some(froms) => Self::matches_service_list(froms, &ctx.from_service, policy),
             None => true, // No "from" means all sources
         };
 
@@ -136,7 +135,7 @@ impl PolicyEngine {
 
         // Check if target matches "to" (if specified)
         let to_matches = match &rule.to {
-            Some(tos) => self.matches_target_list(tos, &ctx.to_target, policy),
+            Some(tos) => Self::matches_target_list(tos, &ctx.to_target, policy),
             None => true, // No "to" means all targets
         };
 
@@ -147,10 +146,10 @@ impl PolicyEngine {
         // Check exceptions
         if let Some(ref exceptions) = rule.except {
             // If either source or target is in exceptions, don't match
-            if self.matches_service_list(exceptions, &ctx.from_service, policy) {
+            if Self::matches_service_list(exceptions, &ctx.from_service, policy) {
                 return false;
             }
-            if self.matches_target_list(exceptions, &ctx.to_target, policy) {
+            if Self::matches_target_list(exceptions, &ctx.to_target, policy) {
                 return false;
             }
         }
@@ -160,14 +159,13 @@ impl PolicyEngine {
 
     /// Checks if a require rule is violated and returns the reason if so.
     fn check_require_rule(
-        &self,
         rule: &RequireRule,
         ctx: &PolicyEvaluationContext,
         policy: &EvaluatedPolicy,
     ) -> Option<String> {
         // Check if this rule applies to the source service
         let applies = match &rule.services {
-            Some(services) => self.matches_service_list(services, &ctx.from_service, policy),
+            Some(services) => Self::matches_service_list(services, &ctx.from_service, policy),
             None => true, // Applies to all services in the mortar
         };
 
@@ -198,7 +196,6 @@ impl PolicyEngine {
 
     /// Checks if a warn rule matches and returns the warning reason if so.
     fn matches_warn_rule(
-        &self,
         rule: &WarnRule,
         ctx: &PolicyEvaluationContext,
         policy: &EvaluatedPolicy,
@@ -209,15 +206,15 @@ impl PolicyEngine {
             // - Target is not in the same mortar project
             // - OR target is an external address
 
-            let target_in_mortar = self.is_target_in_mortar(&ctx.to_target, policy);
-            let is_external = self.is_external_target(&ctx.to_target);
+            let target_in_mortar = Self::is_target_in_mortar(&ctx.to_target, policy);
+            let is_external = Self::is_external_target(&ctx.to_target);
 
             if !target_in_mortar || is_external {
                 // Check exceptions
-                if let Some(ref exceptions) = rule.except {
-                    if self.matches_target_list(exceptions, &ctx.to_target, policy) {
-                        return None;
-                    }
+                if let Some(ref exceptions) = rule.except
+                    && Self::matches_target_list(exceptions, &ctx.to_target, policy)
+                {
+                    return None;
                 }
 
                 return Some("cross-network communication detected".to_string());
@@ -229,7 +226,6 @@ impl PolicyEngine {
 
     /// Checks if a service ID matches any entry in the list.
     fn matches_service_list(
-        &self,
         list: &[String],
         service_id: &str,
         policy: &EvaluatedPolicy,
@@ -244,10 +240,10 @@ impl PolicyEngine {
             }
 
             // Service name match
-            if let Some(name) = service_name {
-                if entry == name {
-                    return true;
-                }
+            if let Some(name) = service_name
+                && entry == name
+            {
+                return true;
             }
 
             // Wildcard match
@@ -260,12 +256,7 @@ impl PolicyEngine {
     }
 
     /// Checks if a target matches any entry in the list.
-    fn matches_target_list(
-        &self,
-        list: &[String],
-        target: &str,
-        policy: &EvaluatedPolicy,
-    ) -> bool {
+    fn matches_target_list(list: &[String], target: &str, policy: &EvaluatedPolicy) -> bool {
         for entry in list {
             // Direct target match
             if entry == target {
@@ -273,10 +264,10 @@ impl PolicyEngine {
             }
 
             // Check if target is a service name in this mortar
-            if let Some(target_id) = policy.service_id(entry) {
-                if target_id == target {
-                    return true;
-                }
+            if let Some(target_id) = policy.service_id(entry)
+                && target_id == target
+            {
+                return true;
             }
 
             // Wildcard match
@@ -285,13 +276,10 @@ impl PolicyEngine {
             }
 
             // Check if it's a service name and the target matches the ID
-            if policy.service_id(target).is_some() {
-                // Target is a service name, check if entry matches its ID
-                if let Some(target_id) = policy.service_id(target) {
-                    if entry == target_id {
-                        return true;
-                    }
-                }
+            if let Some(target_id) = policy.service_id(target)
+                && entry == target_id
+            {
+                return true;
             }
         }
 
@@ -299,7 +287,7 @@ impl PolicyEngine {
     }
 
     /// Checks if a target is within the same mortar project.
-    fn is_target_in_mortar(&self, target: &str, policy: &EvaluatedPolicy) -> bool {
+    fn is_target_in_mortar(target: &str, policy: &EvaluatedPolicy) -> bool {
         // Check if target is a service ID in this mortar
         if policy.contains_service(target) {
             return true;
@@ -314,7 +302,7 @@ impl PolicyEngine {
     }
 
     /// Checks if a target is an external address (not a service).
-    fn is_external_target(&self, target: &str) -> bool {
+    fn is_external_target(target: &str) -> bool {
         // External targets typically contain:
         // - URLs (http://, https://)
         // - IP addresses

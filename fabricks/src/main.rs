@@ -24,6 +24,7 @@ use std::process::ExitCode;
 use clap::Parser;
 use tokio::runtime::Runtime as TokioRuntime;
 
+mod builders;
 mod cli;
 mod commands;
 mod credentials;

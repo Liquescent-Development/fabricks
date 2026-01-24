@@ -12,5 +12,5 @@ mod state;
 pub mod types;
 
 pub use runtime::{HttpRuntime, HttpRuntimeConfig};
-pub use state::{OutboundHandler, WasiHttpState};
+pub use state::{DenyAllOutbound, OutboundHandler, WasiHttpState};
 pub use types::{HttpRequest, HttpResponse, Scheme};

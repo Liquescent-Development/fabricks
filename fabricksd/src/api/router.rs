@@ -25,6 +25,10 @@ pub fn build_router(state: AppState) -> Router {
             "/v1/services/run",
             post(handlers::services::run_fabrickfile),
         )
+        .route(
+            "/v1/services/run-module",
+            post(handlers::services::run_module),
+        )
         .route("/v1/services/{id}", get(handlers::services::get_service))
         .route(
             "/v1/services/{id}",
@@ -128,16 +132,16 @@ mod tests {
 
     use crate::config::DaemonConfig;
 
-    fn create_test_state() -> AppState {
+    async fn create_test_state() -> AppState {
         let dir = tempdir().expect("should create temp dir");
         let mut config = DaemonConfig::default();
         config.daemon.data_dir = dir.keep();
-        AppState::new(config).expect("should create state")
+        AppState::new(config).await.expect("should create state")
     }
 
     #[tokio::test]
     async fn test_health_check_endpoint() {
-        let state = create_test_state();
+        let state = create_test_state().await;
         let app = build_router(state);
 
         let response = app
@@ -155,7 +159,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_daemon_info_endpoint() {
-        let state = create_test_state();
+        let state = create_test_state().await;
         let app = build_router(state);
 
         let response = app
@@ -185,7 +189,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_not_found() {
-        let state = create_test_state();
+        let state = create_test_state().await;
         let app = build_router(state);
 
         let response = app
