@@ -391,21 +391,86 @@ async fn inspect_service(client: &DaemonClient, id: &str, format: OutputFormat) 
             output::writeln(&format!("  WASM:       {}", detail.config.wasm_path))?;
             output::writeln(&format!("  Digest:     {}", detail.config.wasm_digest))?;
 
-            if !detail.config.networks.is_empty() {
-                output::writeln(&format!(
-                    "  Networks:   {}",
-                    detail.config.networks.join(", ")
-                ))?;
+            // Show bound ports
+            if !detail.ports.is_empty() {
+                let ports_str: Vec<String> =
+                    detail.ports.iter().map(|p| p.to_string()).collect();
+                output::writeln(&format!("  Ports:      {}", ports_str.join(", ")))?;
             }
 
+            // Show attached networks (from network manager)
+            if !detail.networks.is_empty() {
+                let networks_str: Vec<String> = detail
+                    .networks
+                    .iter()
+                    .map(|n| {
+                        if n.internal {
+                            format!("{} (internal)", n.name)
+                        } else {
+                            n.name.clone()
+                        }
+                    })
+                    .collect();
+                output::writeln(&format!("  Networks:   {}", networks_str.join(", ")))?;
+            }
+
+            // Show mortar project
             if let Some(ref project) = detail.config.mortar_project {
                 output::writeln(&format!("  Project:    {project}"))?;
             }
 
+            // Show dependencies
+            if !detail.config.depends_on.is_empty() {
+                output::writeln(&format!(
+                    "  Depends On: {}",
+                    detail.config.depends_on.join(", ")
+                ))?;
+            }
+
+            // Show last error
             if let Some(ref error) = detail.last_error {
                 output::writeln(&format!("  Last Error: {error}"))?;
             }
 
+            // Show capabilities section
+            output::writeln("")?;
+            output::writeln("Capabilities:")?;
+            output_capabilities(&detail.config.capabilities)?;
+
+            // Show volumes section
+            if !detail.config.volumes.is_empty() {
+                output::writeln("")?;
+                output::writeln("Volumes:")?;
+                for vol in &detail.config.volumes {
+                    let mode = if vol.read_only { "ro" } else { "rw" };
+                    output::writeln(&format!(
+                        "  - {} -> {} ({})",
+                        vol.volume_name, vol.guest_path, mode
+                    ))?;
+                }
+            }
+
+            // Show health check section
+            if let Some(ref hc) = detail.config.health_check {
+                output::writeln("")?;
+                output::writeln("Health Check:")?;
+                if let Some(obj) = hc.as_object() {
+                    if let Some(endpoint) = obj.get("endpoint") {
+                        output::writeln(&format!("  Endpoint:   {}", endpoint))?;
+                    }
+                    if let Some(interval) = obj.get("interval") {
+                        output::writeln(&format!("  Interval:   {}", interval))?;
+                    }
+                    if let Some(timeout) = obj.get("timeout") {
+                        output::writeln(&format!("  Timeout:    {}", timeout))?;
+                    }
+                    if let Some(retries) = obj.get("retries") {
+                        output::writeln(&format!("  Retries:    {}", retries))?;
+                    }
+                }
+            }
+
+            // Show instances section
             if !detail.instances.is_empty() {
                 output::writeln("")?;
                 output::writeln("Instances:")?;
@@ -418,6 +483,101 @@ async fn inspect_service(client: &DaemonClient, id: &str, format: OutputFormat) 
                 }
             }
         }
+    }
+
+    Ok(())
+}
+
+/// Outputs capabilities in a human-readable format.
+fn output_capabilities(caps: &serde_json::Value) -> Result<()> {
+    let obj = match caps.as_object() {
+        Some(o) => o,
+        None => {
+            output::writeln("  (none)")?;
+            return Ok(());
+        }
+    };
+
+    let mut has_any = false;
+
+    // Environment variables
+    if let Some(env) = obj.get("env") {
+        if let Some(arr) = env.as_array() {
+            if !arr.is_empty() {
+                has_any = true;
+                let vars: Vec<String> = arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect();
+                output::writeln(&format!("  Environment: {}", vars.join(", ")))?;
+            }
+        }
+    }
+
+    // Network capabilities
+    if let Some(network) = obj.get("network") {
+        if let Some(net_obj) = network.as_object() {
+            // Listen ports
+            if let Some(listen) = net_obj.get("listen") {
+                if let Some(arr) = listen.as_array() {
+                    if !arr.is_empty() {
+                        has_any = true;
+                        let ports: Vec<String> =
+                            arr.iter().filter_map(|v| v.as_u64().map(|p| p.to_string())).collect();
+                        output::writeln(&format!("  Listen:      {}", ports.join(", ")))?;
+                    }
+                }
+            }
+            // Connect hosts
+            if let Some(connect) = net_obj.get("connect") {
+                if let Some(arr) = connect.as_array() {
+                    if !arr.is_empty() {
+                        has_any = true;
+                        let hosts: Vec<String> = arr
+                            .iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect();
+                        output::writeln(&format!("  Connect:     {}", hosts.join(", ")))?;
+                    }
+                }
+            }
+        }
+    }
+
+    // Filesystem capabilities
+    if let Some(filesystem) = obj.get("filesystem") {
+        if let Some(fs_obj) = filesystem.as_object() {
+            // Read paths
+            if let Some(read) = fs_obj.get("read") {
+                if let Some(arr) = read.as_array() {
+                    if !arr.is_empty() {
+                        has_any = true;
+                        let paths: Vec<String> = arr
+                            .iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect();
+                        output::writeln(&format!("  FS Read:     {}", paths.join(", ")))?;
+                    }
+                }
+            }
+            // Write paths
+            if let Some(write) = fs_obj.get("write") {
+                if let Some(arr) = write.as_array() {
+                    if !arr.is_empty() {
+                        has_any = true;
+                        let paths: Vec<String> = arr
+                            .iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect();
+                        output::writeln(&format!("  FS Write:    {}", paths.join(", ")))?;
+                    }
+                }
+            }
+        }
+    }
+
+    if !has_any {
+        output::writeln("  (none)")?;
     }
 
     Ok(())

@@ -420,6 +420,27 @@ pub struct ServiceDetail {
     /// Optional mortar project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mortar_project: Option<String>,
+
+    /// Bound ports (populated from proxy server).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ports: Vec<u16>,
+
+    /// Attached networks (populated from network manager).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub networks: Vec<NetworkAttachment>,
+}
+
+/// Network attachment information.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkAttachment {
+    /// Network ID.
+    pub id: String,
+
+    /// Network name.
+    pub name: String,
+
+    /// Whether this is an internal-only network.
+    pub internal: bool,
 }
 
 /// Generates a unique service ID.
