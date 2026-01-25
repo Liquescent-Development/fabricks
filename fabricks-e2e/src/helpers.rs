@@ -34,7 +34,7 @@ impl TestEnv {
         config.daemon.data_dir = temp_dir.path().join("data");
         config.daemon.socket = temp_dir.path().join("fabricks.sock");
 
-        let state = AppState::new(config)?;
+        let state = AppState::new(config).await?;
         state.initialize().await?;
 
         Ok(Self {

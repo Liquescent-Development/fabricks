@@ -22,10 +22,6 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/services", get(handlers::services::list_services))
         .route("/v1/services", post(handlers::services::create_service))
         .route(
-            "/v1/services/run",
-            post(handlers::services::run_fabrickfile),
-        )
-        .route(
             "/v1/services/run-module",
             post(handlers::services::run_module),
         )

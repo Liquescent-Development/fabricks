@@ -185,16 +185,6 @@ pub struct CreateServiceResponse {
     pub name: String,
 }
 
-/// Run Fabrickfile request.
-#[derive(Debug, serde::Serialize)]
-pub struct RunFabrickfileRequest {
-    /// Path to Fabrickfile.
-    pub fabrickfile_path: PathBuf,
-    /// Optional path to pre-built WASM.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub wasm_path: Option<PathBuf>,
-}
-
 /// Run module request (by tag or registry reference).
 #[derive(Debug, serde::Serialize)]
 pub struct RunModuleRequest {
@@ -462,14 +452,6 @@ impl DaemonClient {
     /// Gets details about a specific service.
     pub async fn get_service(&self, id: &str) -> Result<ServiceDetail> {
         self.get(&format!("/v1/services/{id}")).await
-    }
-
-    /// Runs a Fabrickfile through the daemon.
-    pub async fn run_fabrickfile(
-        &self,
-        req: RunFabrickfileRequest,
-    ) -> Result<CreateServiceResponse> {
-        self.post("/v1/services/run", &req).await
     }
 
     /// Runs a module by tag or registry reference through the daemon.

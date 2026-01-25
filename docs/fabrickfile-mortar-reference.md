@@ -492,19 +492,88 @@ Specifies source code location and files to include.
 
 ### `[runtime]` (Optional)
 
-Required for interpreted languages (JavaScript, Python).
+Required for interpreted languages (JavaScript, Python) that don't compile directly to WASM. The runtime section specifies a base WASM runtime that will load and execute your source code at runtime.
+
+**When to Use:**
+- JavaScript/TypeScript applications (uses SpiderMonkey via jco componentize)
+- Python applications (uses CPython via componentize-py)
+- Any other interpreted language with a WASM runtime
+
+**How It Works:**
+
+For interpreted languages, Fabricks uses a **multi-layer OCI approach**:
+- **Layer 0:** Runtime WASM module (e.g., `nodejs-runtime.wasm`, `python-runtime.wasm`)
+- **Layer 1+:** User source code files (packaged as tar.gz)
+
+At runtime:
+1. Daemon loads the runtime WASM from Layer 0
+2. Extracts source files from Layer 1+ to temporary directory
+3. Mounts source at `/app` via WASI filesystem preopens
+4. Runtime reads entrypoint from `/app/.fabricks.toml`
+5. Runtime loads and executes your code
 
 #### `image` (Required if using runtime)
 - **Type:** String
-- **Examples:** `image = "wasm://node:20"`, `image = "wasm://python:3.11"`
+- **Format:** OCI image reference to the runtime
+- **Examples:**
+  - `image = "nodejs-runtime:1.0.0"` - Local tag
+  - `image = "fabricks.dev/runtimes/javascript:20"` - Registry reference
+  - `image = "fabricks.dev/runtimes/python:3.12"` - Python runtime
+
+#### `handler` (Required if using runtime)
+- **Type:** String
+- **Format:** `"file:function"` - Specifies the entrypoint for your application
+- **Examples:**
+  - `handler = "app.js:handler"` - JavaScript function handler
+  - `handler = "app:handler"` - Python function handler (imports `handler` from `app.py`)
+  - `handler = "server:main"` - Alternative entrypoint
 
 #### `config` (Optional)
 - **Type:** Table
+- **Purpose:** Runtime-specific configuration options
 - **Example:**
 ```toml
   [runtime.config]
   heap_size = "512Mi"
   stack_size = "2Mi"
+```
+
+**Complete Examples:**
+
+JavaScript/Node.js Runtime:
+```toml
+[info]
+name = "my-api"
+version = "1.0.0"
+type = "http"
+
+[runtime]
+image = "nodejs-runtime:1.0.0"
+handler = "app.js:handler"
+
+[source]
+path = "."
+
+[capabilities.network]
+listen = [8080]
+```
+
+Python Runtime:
+```toml
+[info]
+name = "my-python-service"
+version = "1.0.0"
+type = "http"
+
+[runtime]
+image = "python-runtime:3.12"
+handler = "app:handler"
+
+[source]
+path = "."
+
+[capabilities.network]
+listen = [8080]
 ```
 
 ---
@@ -845,7 +914,7 @@ listen = [6379]
 read_write = ["./data"]
 ```
 
-### Minimal Fabrickfile (JavaScript HTTP Service)
+### Minimal Fabrickfile (JavaScript HTTP Service with Runtime)
 ```toml
 fabrick_version = "1.0"
 
@@ -854,22 +923,38 @@ name = "api-gateway"
 version = "1.0.0"
 type = "http"  # HTTP handler service
 
-[from]
-source = "javascript"
-
+# Use the JavaScript runtime - no compilation needed!
 [runtime]
-image = "wasm://node:20"
+image = "nodejs-runtime:1.0.0"
+handler = "app.js:handler"
 
 [source]
 path = "."
 
-[build]
-command = "npm run build:wasm"
-output = "dist/api.wasm"
-
 [capabilities.network]
 listen = [3000]
 connect = ["backend:8080"]
+```
+
+### Minimal Fabrickfile (Python HTTP Service with Runtime)
+```toml
+fabrick_version = "1.0"
+
+[info]
+name = "python-api"
+version = "1.0.0"
+type = "http"  # HTTP handler service
+
+# Use the Python runtime - no compilation needed!
+[runtime]
+image = "python-runtime:3.12"
+handler = "app:handler"
+
+[source]
+path = "."
+
+[capabilities.network]
+listen = [8080]
 ```
 
 ### Minimal Fabrickfile (Command/CLI Tool)

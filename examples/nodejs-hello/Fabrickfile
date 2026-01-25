@@ -1,0 +1,26 @@
+# Node.js Hello World
+#
+# A simple JavaScript HTTP service - no WASM knowledge required!
+#
+# Just write JavaScript and run: fabricks build && fabricks run
+
+fabrick_version = "1.0"
+
+[info]
+name = "nodejs-hello"
+version = "1.0.0"
+type = "http"
+description = "A simple JavaScript HTTP service"
+
+# Use the JavaScript runtime - Fabricks handles everything else
+[from]
+source = "javascript"
+version = "20"
+
+# Point to your JavaScript code
+[source]
+path = "."
+entrypoint = "app:handler"
+
+[capabilities.network]
+listen = [8089]

@@ -706,6 +706,87 @@ fabricks mortar exec -e DEBUG=1 api ./debug-script.sh
 
 These commands inspect services managed by the daemon. Services are created declaratively via `fabricks mortar up`, but these commands let you inspect their state.
 
+### `fabricks service run`
+
+Run a WASM module via the daemon (resolves and stores in OCI registry if needed).
+
+**Usage:**
+```bash
+fabricks service run [OPTIONS] <PATH|TAG>
+```
+
+**Arguments:**
+- `<PATH|TAG>` - Path to Fabrickfile directory or OCI image tag
+
+**Options:**
+```
+    -p, --port <HOST:CONTAINER>     Publish ports (can be used multiple times)
+    -e, --env <KEY=VAL>             Set environment variables (can be used multiple times)
+        --env-file <FILE>           Read environment from file
+    -v, --volume <SRC:DEST>         Mount volumes (can be used multiple times)
+        --name <NAME>               Assign a name to the instance
+        --network <NETWORK>         Connect to network
+        --rm                        Automatically remove when stopped
+    -d, --detach                    Run in background
+        --restart <POLICY>          Restart policy [default: no] [possible: no, on-failure, always]
+```
+
+**How it Works:**
+
+1. **Resolution Phase:**
+   - If `<PATH|TAG>` is a directory path, checks for Fabrickfile
+   - If Fabrickfile exists and module not built, builds it
+   - If `<PATH|TAG>` is an OCI tag, pulls from registry if not cached
+   - Stores/verifies module in local OCI storage
+
+2. **Execution Phase:**
+   - Daemon loads module from OCI storage
+   - For interpreted runtimes (JS/Python), extracts source layer to temp directory
+   - Mounts source files at `/app` via WASI preopens
+   - Executes WASM module with specified capabilities and configuration
+
+**Examples:**
+```bash
+# Run from Fabrickfile directory (builds if needed)
+fabricks service run ./examples/nodejs-hello
+
+# Run by OCI tag
+fabricks service run nodejs-hello:1.0.0
+
+# Run with port mapping
+fabricks service run -p 8080:8089 ./examples/nodejs-hello
+
+# Run with environment variables
+fabricks service run -e LOG_LEVEL=debug nodejs-hello:1.0.0
+
+# Run in background with auto-restart
+fabricks service run -d --restart on-failure nodejs-hello:1.0.0
+```
+
+**Output:**
+```
+Resolving nodejs-hello...
+✓ Found Fabrickfile at ./examples/nodejs-hello
+✓ Building module (not found in OCI storage)
+  [1/3] Resolving runtime: javascript:20
+  [2/3] Packaging source files
+  [3/3] Storing in OCI registry as nodejs-hello:1.0.0
+✓ Stored: sha256:abc123...
+
+Starting service via daemon...
+✓ Service ID: srv_xyz789
+✓ Network: listen on 0.0.0.0:8089
+✓ Health check passed
+Service running: nodejs-hello (nodejs-hello:1.0.0)
+```
+
+**Notes:**
+- This command always runs through the daemon (unlike `fabricks run` which can run standalone)
+- Supports interpreted runtimes (JavaScript, Python) via multi-layer OCI images
+- For build failures, see `fabricks build --help` for troubleshooting
+
+---
+
 ### `fabricks service ls`
 
 List all running services (across all mortar compositions).

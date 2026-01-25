@@ -1,0 +1,39 @@
+# Node.js Runtime Base Image
+#
+# This is an official Fabricks runtime image for JavaScript applications.
+# End users don't build this - they use it via [from].source = "javascript"
+#
+# To build this runtime (requires jco):
+#   fabricks build examples/runtimes/nodejs --tag fabricks.dev/runtimes/javascript:20
+#
+# To use this runtime (no toolchain required):
+#   [from]
+#   source = "javascript"
+#   version = "20"
+
+fabrick_version = "1.0"
+
+[info]
+name = "nodejs-runtime"
+version = "20.0.0"
+type = "http"
+description = "Node.js 20 HTTP runtime for Fabricks - bundles SpiderMonkey JavaScript engine with WASI HTTP support"
+authors = ["Fabricks Team"]
+license = "Apache-2.0"
+
+# Note: This runtime is built using jco componentize
+# The build command below handles everything
+
+[build]
+# The Node.js runtime uses jco componentize to bundle SpiderMonkey + our HTTP framework
+# This requires jco to be installed: npm install -g @bytecodealliance/jco
+command = """
+npx jco componentize src/handler.js \
+    --wit wit \
+    --world-name http-handler \
+    --out nodejs-runtime.wasm
+"""
+output = "nodejs-runtime.wasm"
+
+[capabilities.network]
+listen = [8080]

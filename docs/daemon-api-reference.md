@@ -573,6 +573,55 @@ curl --unix-socket /var/run/fabricks.sock \
 
 ---
 
+### Run Module
+
+**Endpoint:** `POST /v1/services/run-module`
+
+Runs a module from OCI storage by tag or reference. This is the primary endpoint for running services - it loads the module from local OCI storage, handles multi-layer modules (runtime + source layers for interpreted runtimes), creates a service, and starts it.
+
+**Request Body:**
+```json
+{
+  "reference": "hello-http:0.1.0",
+  "args": [],
+  "env_vars": [],
+  "no_capabilities": false
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `reference` | string | Yes | Module tag (e.g., "my-module:1.0.0") |
+| `args` | array | No | Command-line arguments to pass to the module |
+| `env_vars` | array | No | Environment variable overrides as `[key, value]` tuples |
+| `no_capabilities` | boolean | No | Disable capability enforcement (default: false) |
+
+**Response:**
+```json
+{
+  "status": "success",
+  "data": {
+    "id": "svc-a1b2c3d4",
+    "name": "hello-http"
+  }
+}
+```
+
+**cURL Example:**
+```bash
+curl --unix-socket /var/run/fabricks.sock \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"reference":"hello-http:0.1.0"}' \
+  http://localhost/v1/services/run-module
+```
+
+**Notes:**
+- For interpreted runtimes (Python, JavaScript), the module's runtime layer is used as the WASM binary and source layers are extracted to `/app`
+- The module must exist in local OCI storage (use CLI to build and store first)
+
+---
+
 ### List Services
 
 **Endpoint:** `GET /v1/services`

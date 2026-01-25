@@ -10,11 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::response::ApiResponse;
 use crate::error::DaemonError;
-use crate::network::NetworkConfig;
 use crate::service::{ServiceConfig, ServiceDetail, ServiceInfo};
 use crate::state::AppState;
 use crate::volume::VolumeMount;
-use fabricks_common::models::Replicas;
+use fabricks_common::Fabrickfile;
 
 /// Request to create a service.
 #[derive(Debug, Deserialize)]
@@ -45,17 +44,6 @@ pub struct CreateServiceResponse {
 
     /// Service name.
     pub name: String,
-}
-
-/// Request to run a Fabrickfile.
-#[derive(Debug, Deserialize)]
-pub struct RunFabrickfileRequest {
-    /// Path to the Fabrickfile.
-    pub fabrickfile_path: PathBuf,
-
-    /// Optional path to pre-built WASM.
-    #[serde(default)]
-    pub wasm_path: Option<PathBuf>,
 }
 
 /// Request to run a module by tag.
@@ -123,36 +111,6 @@ pub async fn create_service(
     }
 }
 
-/// POST `/v1/services/run`
-///
-/// Runs a Fabrickfile (creates and starts a service).
-pub async fn run_fabrickfile(
-    State(state): State<AppState>,
-    Json(req): Json<RunFabrickfileRequest>,
-) -> Json<ApiResponse<CreateServiceResponse>> {
-    let manager = state.service_manager.write().await;
-
-    match manager
-        .run_fabrickfile(&req.fabrickfile_path, req.wasm_path.as_deref())
-        .await
-    {
-        Ok(id) => {
-            // Get service info to return name
-            match manager.get_service(&id).await {
-                Ok(detail) => Json(ApiResponse::success(CreateServiceResponse {
-                    id,
-                    name: detail.name,
-                })),
-                Err(_) => Json(ApiResponse::success(CreateServiceResponse {
-                    id,
-                    name: "unknown".to_string(),
-                })),
-            }
-        }
-        Err(e) => Json(error_response(&e)),
-    }
-}
-
 /// POST `/v1/services/run-module`
 ///
 /// Runs a module from OCI storage by tag/reference.
@@ -211,7 +169,7 @@ pub async fn run_module(
 
         // Extract each source layer (they stack, later overrides earlier)
         for source_layer in module.source_layers() {
-            if let Err(e) = extract_tar_gz(&source_layer.data, &app_dir).await {
+            if let Err(e) = extract_tar_gz(&source_layer.data, &app_dir) {
                 return Json(error_response(&DaemonError::OciStorageError(format!(
                     "failed to extract source layer: {e}"
                 ))));
@@ -223,58 +181,14 @@ pub async fn run_module(
         None
     };
 
-    // Build environment from config and overrides
-    let mut environment = fabrickfile
-        .config
-        .as_ref()
-        .and_then(|c| c.environment.clone())
-        .unwrap_or_default();
-
-    // Apply environment overrides from request
-    for (key, value) in &req.env_vars {
-        environment.insert(key.clone(), value.clone());
-    }
-
-    // Compute digest
-    let digest = compute_digest(wasm_bytes);
-
-    // Build volume mounts for interpreted runtimes
-    let volumes = if let Some(ref app_dir) = source_mount_path {
-        vec![VolumeMount::read_only(
-            "app-source".to_string(),
-            "app-source".to_string(),
-            app_dir.clone(),
-            "/app".to_string(),
-        )]
-    } else {
-        Vec::new()
-    };
-
     // Build service config
-    let config = ServiceConfig {
-        name: fabrickfile.info.name.clone(),
-        version: fabrickfile.info.version.clone(),
-        service_type: fabrickfile.info.service_type,
+    let config = build_service_config(
+        fabrickfile,
         wasm_path,
-        wasm_digest: digest,
-        capabilities: if req.no_capabilities {
-            fabricks_common::Capabilities::default()
-        } else {
-            fabrickfile.capabilities.clone()
-        },
-        environment,
-        args: req.args.clone(),
-        resources: fabrickfile
-            .config
-            .as_ref()
-            .and_then(|c| c.resources.clone()),
-        replicas: Replicas::default(),
-        health_check: fabrickfile.health_check.clone(),
-        depends_on: Vec::new(),
-        networks: Vec::new(),
-        volumes,
-        mortar_project: None,
-    };
+        wasm_bytes,
+        source_mount_path,
+        &req,
+    );
 
     let manager = state.service_manager.write().await;
 
@@ -398,7 +312,7 @@ fn compute_digest(bytes: &[u8]) -> String {
 }
 
 /// Extracts a gzipped tar archive to a directory.
-async fn extract_tar_gz(data: &[u8], dest: &std::path::Path) -> std::io::Result<()> {
+fn extract_tar_gz(data: &[u8], dest: &std::path::Path) -> std::io::Result<()> {
     use std::io::Cursor;
     use flate2::read::GzDecoder;
     use tar::Archive;
@@ -411,6 +325,61 @@ async fn extract_tar_gz(data: &[u8], dest: &std::path::Path) -> std::io::Result<
     archive.unpack(dest)?;
 
     Ok(())
+}
+
+/// Builds a service configuration from a Fabrickfile and module data.
+fn build_service_config(
+    fabrickfile: &Fabrickfile,
+    wasm_path: PathBuf,
+    wasm_bytes: &[u8],
+    source_mount_path: Option<PathBuf>,
+    req: &RunModuleRequest,
+) -> ServiceConfig {
+    let digest = compute_digest(wasm_bytes);
+
+    // Merge environment variables from Fabrickfile and request
+    let mut environment: std::collections::HashMap<String, String> = fabrickfile
+        .config
+        .as_ref()
+        .and_then(|c| c.environment.clone())
+        .unwrap_or_default();
+    for (key, value) in &req.env_vars {
+        environment.insert(key.clone(), value.clone());
+    }
+
+    // Add /app volume mount for interpreted modules (read-only source)
+    let volumes = source_mount_path
+        .map(|path| {
+            vec![VolumeMount::read_only(
+                "app-source".to_string(),
+                "app-source".to_string(),
+                path,
+                "/app".to_string(),
+            )]
+        })
+        .unwrap_or_default();
+
+    ServiceConfig {
+        name: fabrickfile.info.name.clone(),
+        version: fabrickfile.info.version.clone(),
+        service_type: fabrickfile.info.service_type,
+        wasm_path,
+        wasm_digest: digest,
+        capabilities: if req.no_capabilities {
+            fabricks_common::Capabilities::default()
+        } else {
+            fabrickfile.capabilities.clone()
+        },
+        environment,
+        args: req.args.clone(),
+        resources: fabrickfile.config.as_ref().and_then(|c| c.resources.clone()),
+        replicas: fabricks_common::models::Replicas::default(),
+        health_check: fabrickfile.health_check.clone(),
+        depends_on: Vec::new(),
+        networks: Vec::new(),
+        volumes,
+        mortar_project: None,
+    }
 }
 
 /// Converts a `DaemonError` to an API error response.

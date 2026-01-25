@@ -1,0 +1,18 @@
+// Fabricks Node.js HTTP Handler World
+//
+// This defines the interface for JavaScript HTTP applications.
+// The runtime implements wasi:http/incoming-handler to serve requests
+// and uses WASI filesystem to load user code from /app at runtime.
+
+package fabricks:nodejs-runtime@20.0.0;
+
+world http-handler {
+    // Include the WASI HTTP proxy world which provides:
+    // - wasi:http/incoming-handler (export) - handle incoming HTTP requests
+    // - wasi:http/outgoing-handler (import) - make outgoing HTTP requests
+    include wasi:http/proxy@0.2.0;
+
+    // Import filesystem interfaces to load user code from /app
+    import wasi:filesystem/types@0.2.0;
+    import wasi:filesystem/preopens@0.2.0;
+}

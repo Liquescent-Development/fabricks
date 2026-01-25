@@ -1,25 +1,28 @@
 //! Service command implementation.
 
-use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use fabricks_common::{Fabrickfile, parse_fabrickfile};
 use fabricks_oci::{FabricksModule, LocalStorage};
-use tempfile::NamedTempFile;
 use tracing::{debug, info};
 
 use crate::cli::{OutputFormat, ServiceArgs, ServiceCommands};
-use crate::daemon_client::{DaemonClient, RunFabrickfileRequest};
+use crate::daemon_client::DaemonClient;
 use crate::output;
 
 /// Source of a resolved module.
-enum ModuleSource {
+pub enum ModuleSource {
     /// A module loaded from local storage.
     Storage {
+        /// The module tag/reference.
         tag: String,
+        /// The Fabrickfile configuration (kept for potential future use).
+        #[allow(dead_code)]
         fabrickfile: Fabrickfile,
+        /// The WASM bytes (kept for potential future use).
+        #[allow(dead_code)]
         wasm_bytes: Vec<u8>,
     },
 }
@@ -54,7 +57,7 @@ pub async fn run(args: &ServiceArgs) -> Result<()> {
 /// - Local file path (exists on filesystem) -> build if needed, store, load from storage
 /// - Registry reference (contains '/') -> not yet supported
 /// - Local storage tag (e.g., "hello-http:0.1.0") -> load from storage
-async fn resolve_module_reference(reference: &str) -> Result<ModuleSource> {
+pub async fn resolve_module_reference(reference: &str) -> Result<ModuleSource> {
     let path = Path::new(reference);
 
     // 1. Local file/directory path
@@ -333,30 +336,20 @@ fn get_local_storage() -> Result<LocalStorage> {
 
 /// Run a service from a module reference.
 async fn run_service(client: &DaemonClient, reference: &str, format: OutputFormat) -> Result<()> {
-    let ModuleSource::Storage {
-        tag,
-        fabrickfile,
-        wasm_bytes,
-    } = resolve_module_reference(reference).await?;
-
-    // Write WASM to a temp file and create a temp Fabrickfile
-    // (daemon currently expects file paths)
-    let wasm_temp = write_temp_wasm(&wasm_bytes)?;
-    let fabrickfile_temp = write_temp_fabrickfile(&fabrickfile)?;
+    let ModuleSource::Storage { tag, .. } = resolve_module_reference(reference).await?;
 
     output::writeln(&format!("Running module: {tag}"))?;
 
-    let req = RunFabrickfileRequest {
-        fabrickfile_path: fabrickfile_temp.path().to_path_buf(),
-        wasm_path: Some(wasm_temp.path().to_path_buf()),
+    // Use run_module endpoint which properly handles multi-layer modules
+    // (runtime + source layers for interpreted runtimes like Python/JavaScript)
+    let req = crate::daemon_client::RunModuleRequest {
+        reference: tag.clone(),
+        args: Vec::new(),
+        env_vars: Vec::new(),
+        no_capabilities: false,
     };
 
-    // Keep temp files alive during the request
-    let response = client.run_fabrickfile(req).await?;
-
-    // Temp files are dropped here after daemon has read them
-    drop(wasm_temp);
-    drop(fabrickfile_temp);
+    let response = client.run_module(req).await?;
 
     match format {
         OutputFormat::Json => {
@@ -373,26 +366,6 @@ async fn run_service(client: &DaemonClient, reference: &str, format: OutputForma
     }
 
     Ok(())
-}
-
-/// Write WASM bytes to a temporary file.
-fn write_temp_wasm(wasm_bytes: &[u8]) -> Result<NamedTempFile> {
-    let mut temp = NamedTempFile::with_suffix(".wasm").context("Failed to create temp file")?;
-    temp.write_all(wasm_bytes)
-        .context("Failed to write WASM to temp file")?;
-    temp.flush().context("Failed to flush temp file")?;
-    Ok(temp)
-}
-
-/// Write Fabrickfile to a temporary file.
-fn write_temp_fabrickfile(fabrickfile: &Fabrickfile) -> Result<NamedTempFile> {
-    let mut temp = NamedTempFile::with_suffix(".toml").context("Failed to create temp file")?;
-    let toml_content =
-        toml::to_string_pretty(fabrickfile).context("Failed to serialize Fabrickfile")?;
-    temp.write_all(toml_content.as_bytes())
-        .context("Failed to write Fabrickfile to temp file")?;
-    temp.flush().context("Failed to flush temp file")?;
-    Ok(temp)
 }
 
 async fn inspect_service(client: &DaemonClient, id: &str, format: OutputFormat) -> Result<()> {
