@@ -144,6 +144,20 @@ pub struct ServiceDetail {
     /// Bound ports.
     #[serde(default)]
     pub ports: Vec<u16>,
+    /// Attached networks.
+    #[serde(default)]
+    pub networks: Vec<NetworkAttachment>,
+}
+
+/// Network attachment information.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct NetworkAttachment {
+    /// Network ID.
+    pub id: String,
+    /// Network name.
+    pub name: String,
+    /// Whether this is an internal-only network.
+    pub internal: bool,
 }
 
 /// Service configuration details.
@@ -159,12 +173,36 @@ pub struct ServiceConfigDetail {
     pub wasm_path: String,
     /// WASM digest.
     pub wasm_digest: String,
-    /// Networks.
+    /// Capabilities granted to the service.
+    #[serde(default)]
+    pub capabilities: serde_json::Value,
+    /// Volume mounts.
+    #[serde(default)]
+    pub volumes: Vec<VolumeMountInfo>,
+    /// Health check configuration.
+    #[serde(default)]
+    pub health_check: Option<serde_json::Value>,
+    /// Service dependencies.
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    /// Networks (from config).
     #[serde(default)]
     pub networks: Vec<String>,
     /// Mortar project.
     #[serde(default)]
     pub mortar_project: Option<String>,
+}
+
+/// Volume mount information.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct VolumeMountInfo {
+    /// Volume name.
+    pub volume_name: String,
+    /// Guest mount path.
+    pub guest_path: String,
+    /// Whether read-only.
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 /// Instance information.

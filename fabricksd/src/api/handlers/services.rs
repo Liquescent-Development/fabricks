@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::response::ApiResponse;
 use crate::error::DaemonError;
-use crate::service::{ServiceConfig, ServiceDetail, ServiceInfo};
+use crate::service::{NetworkAttachment, ServiceConfig, ServiceDetail, ServiceInfo};
 use crate::state::AppState;
 use crate::volume::VolumeMount;
 use fabricks_common::Fabrickfile;
@@ -244,6 +244,18 @@ pub async fn get_service(
                 .filter(|b| b.service_id == detail.id)
                 .map(|b| b.port)
                 .collect();
+
+            // Populate network attachments from network manager
+            let network_ids = state.network_manager.get_service_networks(&detail.id).await;
+            for network_id in network_ids {
+                if let Some(network) = state.network_manager.get_network(&network_id).await {
+                    detail.networks.push(NetworkAttachment {
+                        id: network.id,
+                        name: network.name,
+                        internal: network.options.access.is_internal(),
+                    });
+                }
+            }
 
             Json(ApiResponse::success(detail))
         }

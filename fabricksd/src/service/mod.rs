@@ -52,6 +52,6 @@ pub mod types;
 pub use handle::{CapabilityOutboundHandler, ServiceHandle};
 pub use manager::ServiceManager;
 pub use types::{
-    Instance, InstanceState, ReplicaState, ServiceConfig, ServiceDetail, ServiceInfo, ServiceState,
-    State, generate_instance_id, generate_service_id,
+    Instance, InstanceState, NetworkAttachment, ReplicaState, ServiceConfig, ServiceDetail,
+    ServiceInfo, ServiceState, State, generate_instance_id, generate_service_id,
 };
