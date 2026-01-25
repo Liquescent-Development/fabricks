@@ -179,6 +179,7 @@ impl ServiceHandle {
             last_error: state.last_error.clone(),
             instances,
             mortar_project: state.mortar_project.clone(),
+            ports: Vec::new(), // Populated by API handler from proxy server
         }
     }
 

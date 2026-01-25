@@ -141,6 +141,9 @@ pub struct ServiceDetail {
     /// Running instances.
     #[serde(default)]
     pub instances: Vec<InstanceInfo>,
+    /// Bound ports.
+    #[serde(default)]
+    pub ports: Vec<u16>,
 }
 
 /// Service configuration details.

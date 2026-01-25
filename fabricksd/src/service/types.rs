@@ -420,6 +420,10 @@ pub struct ServiceDetail {
     /// Optional mortar project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mortar_project: Option<String>,
+
+    /// Bound ports (populated from proxy server).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ports: Vec<u16>,
 }
 
 /// Generates a unique service ID.

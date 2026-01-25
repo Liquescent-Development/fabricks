@@ -398,6 +398,12 @@ async fn inspect_service(client: &DaemonClient, id: &str, format: OutputFormat) 
                 ))?;
             }
 
+            if !detail.ports.is_empty() {
+                let ports_str: Vec<String> =
+                    detail.ports.iter().map(|p| p.to_string()).collect();
+                output::writeln(&format!("  Ports:      {}", ports_str.join(", ")))?;
+            }
+
             if let Some(ref project) = detail.config.mortar_project {
                 output::writeln(&format!("  Project:    {project}"))?;
             }

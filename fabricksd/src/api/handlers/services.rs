@@ -236,19 +236,35 @@ pub async fn get_service(
     let manager = state.service_manager.read().await;
 
     match manager.get_service_by_id_or_name(&id_or_name).await {
-        Ok(detail) => Json(ApiResponse::success(detail)),
+        Ok(mut detail) => {
+            // Populate port bindings from proxy server
+            let bindings = state.proxy_server.list_bindings().await;
+            detail.ports = bindings
+                .into_iter()
+                .filter(|b| b.service_id == detail.id)
+                .map(|b| b.port)
+                .collect();
+
+            Json(ApiResponse::success(detail))
+        }
         Err(e) => Json(error_response(&e)),
     }
 }
 
 /// POST `/v1/services/:id/start`
 ///
-/// Starts a service.
+/// Starts a service. The path parameter can be either a service ID or name.
 pub async fn start_service(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id_or_name): Path<String>,
 ) -> Json<ApiResponse<()>> {
     let manager = state.service_manager.write().await;
+
+    // Resolve name to ID if needed
+    let id = match resolve_service_id(&manager, &id_or_name).await {
+        Ok(id) => id,
+        Err(e) => return Json(error_response(&e)),
+    };
 
     match manager.start_service(&id).await {
         Ok(()) => Json(ApiResponse::Success { data: () }),
@@ -258,12 +274,18 @@ pub async fn start_service(
 
 /// POST `/v1/services/:id/stop`
 ///
-/// Stops a service.
+/// Stops a service. The path parameter can be either a service ID or name.
 pub async fn stop_service(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id_or_name): Path<String>,
 ) -> Json<ApiResponse<()>> {
     let manager = state.service_manager.write().await;
+
+    // Resolve name to ID if needed
+    let id = match resolve_service_id(&manager, &id_or_name).await {
+        Ok(id) => id,
+        Err(e) => return Json(error_response(&e)),
+    };
 
     match manager.stop_service(&id).await {
         Ok(()) => Json(ApiResponse::Success { data: () }),
@@ -274,12 +296,19 @@ pub async fn stop_service(
 /// POST `/v1/services/:id/scale`
 ///
 /// Scales a service to a target number of replicas.
+/// The path parameter can be either a service ID or name.
 pub async fn scale_service(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id_or_name): Path<String>,
     Json(req): Json<ScaleServiceRequest>,
 ) -> Json<ApiResponse<()>> {
     let manager = state.service_manager.write().await;
+
+    // Resolve name to ID if needed
+    let id = match resolve_service_id(&manager, &id_or_name).await {
+        Ok(id) => id,
+        Err(e) => return Json(error_response(&e)),
+    };
 
     match manager.scale_service(&id, req.replicas).await {
         Ok(()) => Json(ApiResponse::Success { data: () }),
@@ -289,17 +318,38 @@ pub async fn scale_service(
 
 /// DELETE `/v1/services/:id`
 ///
-/// Deletes a service.
+/// Deletes a service. The path parameter can be either a service ID or name.
 pub async fn delete_service(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id_or_name): Path<String>,
 ) -> Json<ApiResponse<()>> {
     let manager = state.service_manager.write().await;
+
+    // Resolve name to ID if needed
+    let id = match resolve_service_id(&manager, &id_or_name).await {
+        Ok(id) => id,
+        Err(e) => return Json(error_response(&e)),
+    };
 
     match manager.delete_service(&id).await {
         Ok(()) => Json(ApiResponse::Success { data: () }),
         Err(e) => Json(error_response(&e)),
     }
+}
+
+/// Resolves a service ID or name to an ID.
+async fn resolve_service_id(
+    manager: &crate::service::ServiceManager,
+    id_or_name: &str,
+) -> Result<String, DaemonError> {
+    // If it looks like an ID (starts with "svc-"), use it directly
+    if id_or_name.starts_with("svc-") {
+        return Ok(id_or_name.to_string());
+    }
+
+    // Otherwise, look up by name
+    let detail = manager.get_service_by_id_or_name(id_or_name).await?;
+    Ok(detail.id)
 }
 
 /// Computes SHA256 digest of bytes.
