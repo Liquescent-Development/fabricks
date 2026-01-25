@@ -178,10 +178,9 @@ impl AppState {
             )))?
             .join(".fabricks/storage");
         let oci_storage = Arc::new(LocalStorage::new(storage_path).await.map_err(|e| {
-            DaemonError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("failed to initialize OCI storage: {e}"),
-            ))
+            DaemonError::IoError(std::io::Error::other(format!(
+                "failed to initialize OCI storage: {e}"
+            )))
         })?);
 
         Ok(Self {

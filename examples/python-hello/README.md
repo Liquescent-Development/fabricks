@@ -160,3 +160,22 @@ fabricks network ls
 # Remove service from network
 fabricks network leave public python-hello
 ```
+
+## Multi-Layer OCI Architecture
+
+This example uses Fabricks' **multi-layer OCI approach** for interpreted runtimes:
+
+- **Layer 0:** Pre-built Python runtime WASM (~15MB) - CPython 3.12 + WASI HTTP framework
+- **Layer 1:** Your source code (app.py) - packaged as tar.gz, mounted at `/app` at runtime
+
+Benefits:
+- Runtime built once, reused across all Python projects
+- Only source layer rebuilds when you change code (fast iteration)
+- No compilation step for your Python code!
+
+## Learn More
+
+- **[Interpreted Runtimes Documentation](../../docs/interpreted-runtimes.md)** - Complete guide to JS/Python runtimes
+- **[Fabrickfile Reference](../../docs/fabrickfile-mortar-reference.md#runtime-optional)** - Runtime configuration options
+- **[CLI Reference](../../docs/cli-reference.md#fabricks-service-run)** - Running services via daemon
+- **[Python Runtime Details](../runtimes/python/)** - Runtime implementation (for maintainers)
