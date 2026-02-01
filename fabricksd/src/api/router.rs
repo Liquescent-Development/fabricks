@@ -16,6 +16,7 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         // Daemon management
         .route("/v1/daemon/info", get(handlers::daemon::daemon_info))
+        .route("/v1/daemon/shutdown", post(handlers::daemon::shutdown))
         // Simple health check for liveness probes
         .route("/v1/health", get(health_check))
         // Service management
@@ -41,6 +42,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/v1/services/{id}/scale",
             post(handlers::services::scale_service),
+        )
+        .route(
+            "/v1/services/{id}/logs",
+            get(handlers::services::get_service_logs),
         )
         // Mortar project management
         .route("/v1/mortar/deploy", post(handlers::mortar::deploy_mortar))

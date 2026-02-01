@@ -10,8 +10,9 @@ use crate::state::AppState;
 
 /// Waits for shutdown signal and coordinates graceful shutdown.
 ///
-/// This function listens for SIGTERM and SIGINT signals, publishes a
-/// shutdown event, and signals all tasks to clean up before returning.
+/// This function listens for SIGTERM, SIGINT signals, and API-triggered
+/// shutdown requests. It publishes a shutdown event and signals all tasks
+/// to clean up before returning.
 ///
 /// # Arguments
 ///
@@ -39,10 +40,18 @@ pub async fn shutdown_signal(state: AppState, timeout: Duration) {
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
 
-    tokio::select! {
-        () = ctrl_c => info!("Received Ctrl+C, initiating shutdown"),
-        () = terminate => info!("Received SIGTERM, initiating shutdown"),
-    }
+    // Listen for API-triggered shutdown
+    let mut api_shutdown = state.subscribe_shutdown();
+    let api_shutdown_signal = async move {
+        let _ = api_shutdown.recv().await;
+    };
+
+    let shutdown_reason = tokio::select! {
+        () = ctrl_c => "Ctrl+C",
+        () = terminate => "SIGTERM",
+        () = api_shutdown_signal => "API request",
+    };
+    info!("Received {shutdown_reason}, initiating shutdown");
 
     // Publish shutdown event
     let event = Event::new(

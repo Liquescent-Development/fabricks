@@ -252,6 +252,48 @@ impl Runtime {
         Ok(())
     }
 
+    /// Run the component as a WASI command with custom stdout/stderr capture.
+    ///
+    /// This is identical to [`run()`](Self::run) except that stdout and stderr
+    /// are directed to the provided `StdoutStream` implementations instead of
+    /// being inherited from the host process.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if execution fails or a capability is violated.
+    pub fn run_with_output(
+        &self,
+        stdout: impl wasmtime_wasi::StdoutStream + 'static,
+        stderr: impl wasmtime_wasi::StdoutStream + 'static,
+    ) -> Result<()> {
+        let mut store = self.create_store_with_output(stdout, stderr)?;
+        let mut linker = self.create_linker();
+
+        wasmtime_wasi::add_to_linker_sync(&mut linker)?;
+
+        let command = wasmtime_wasi::bindings::sync::Command::instantiate(
+            &mut store,
+            &self.component,
+            &linker,
+        )
+        .map_err(|e| RuntimeError::InstantiationError {
+            reason: e.to_string(),
+        })?;
+
+        info!("Executing WASI command with output capture");
+        command
+            .wasi_cli_run()
+            .call_run(&mut store)
+            .map_err(|e| RuntimeError::ExecutionError {
+                reason: e.to_string(),
+            })?
+            .map_err(|()| RuntimeError::ExecutionError {
+                reason: "command returned error".to_string(),
+            })?;
+
+        Ok(())
+    }
+
     /// Create a new store with WASI state configured per capabilities.
     fn create_store(&self) -> Result<Store<WasiState>> {
         let wasi_ctx = self.build_wasi_context()?;
@@ -267,6 +309,33 @@ impl Runtime {
         }
 
         // Set fuel limit if configured
+        if let Some(fuel) = self.config.fuel_limit {
+            store
+                .set_fuel(fuel)
+                .map_err(|e| RuntimeError::ExecutionError {
+                    reason: format!("failed to set fuel: {e}"),
+                })?;
+        }
+
+        Ok(store)
+    }
+
+    /// Create a new store with custom stdout/stderr capture.
+    fn create_store_with_output(
+        &self,
+        stdout: impl wasmtime_wasi::StdoutStream + 'static,
+        stderr: impl wasmtime_wasi::StdoutStream + 'static,
+    ) -> Result<Store<WasiState>> {
+        let wasi_ctx = self.build_wasi_context_with_output(stdout, stderr)?;
+
+        let store_limits = self.build_store_limits();
+        let state = WasiState::new(wasi_ctx, store_limits);
+        let mut store = Store::new(&self.engine, state);
+
+        if self.config.resource_limits.is_some() {
+            store.limiter(|state| &mut state.limits);
+        }
+
         if let Some(fuel) = self.config.fuel_limit {
             store
                 .set_fuel(fuel)
@@ -304,6 +373,40 @@ impl Runtime {
         if self.config.inherit_stdio {
             builder.inherit_stdio();
         }
+
+        // Configure arguments
+        if !self.config.args.is_empty() {
+            builder.args(&self.config.args);
+        }
+
+        // Configure environment variables (filtered by capabilities)
+        self.configure_env(&mut builder);
+
+        // Configure filesystem access (based on capabilities)
+        self.configure_filesystem(&mut builder)?;
+
+        // Configure volume mounts
+        self.configure_volume_mounts(&mut builder)?;
+
+        Ok(builder.build())
+    }
+
+    /// Build WASI context with custom stdout/stderr capture.
+    ///
+    /// Identical to [`build_wasi_context`](Self::build_wasi_context) except
+    /// stdout and stderr are directed to the provided streams.
+    fn build_wasi_context_with_output(
+        &self,
+        stdout: impl wasmtime_wasi::StdoutStream + 'static,
+        stderr: impl wasmtime_wasi::StdoutStream + 'static,
+    ) -> Result<WasiCtx> {
+        let mut builder = WasiCtxBuilder::new();
+
+        // Custom stdio capture
+        info!("Setting custom stdout/stderr streams on WasiCtxBuilder");
+        builder.stdout(stdout);
+        builder.stderr(stderr);
+        info!("Custom stdout/stderr streams configured");
 
         // Configure arguments
         if !self.config.args.is_empty() {

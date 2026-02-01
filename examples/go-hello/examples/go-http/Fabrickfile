@@ -1,0 +1,22 @@
+# Go HTTP Service Example
+# An HTTP service built with TinyGo using wasi:http
+
+fabrick_version = "1.0"
+
+[info]
+name = "go-http"
+version = "0.1.0"
+type = "http"
+description = "A simple Go HTTP service using TinyGo"
+
+[from]
+source = "go"
+
+[source]
+path = "."
+
+[capabilities.network]
+listen = [8080]
+
+[health_check.http]
+path = "/health"

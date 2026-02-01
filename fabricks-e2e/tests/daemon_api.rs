@@ -147,10 +147,11 @@ async fn test_network_management() {
         .await
         .expect("should create network");
 
-    // List networks
+    // List networks (includes the auto-created "default" network)
     let networks = env.state.network_manager.list_networks().await;
-    assert_eq!(networks.len(), 1);
-    assert_eq!(networks[0].name, "test-network");
+    assert_eq!(networks.len(), 2);
+    assert!(networks.iter().any(|n| n.name == "test-network"));
+    assert!(networks.iter().any(|n| n.name == "default"));
 
     // Get network detail
     let detail = env

@@ -404,6 +404,32 @@ impl ServiceManager {
         self.get_service(&id).await
     }
 
+    /// Returns log entries for a service, resolved by ID or name.
+    ///
+    /// # Arguments
+    ///
+    /// * `id_or_name` - Service ID or name
+    /// * `tail` - If `Some(n)`, return only the last `n` entries
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the service is not found.
+    pub async fn get_service_logs(
+        &self,
+        id_or_name: &str,
+        tail: Option<usize>,
+    ) -> Result<(String, Vec<super::LogEntry>)> {
+        let Some(id) = self.resolve_service_id(id_or_name).await else {
+            return Err(DaemonError::ServiceNotFound {
+                id: id_or_name.to_string(),
+            });
+        };
+
+        let handle = self.get_handle(&id).await?;
+        let entries = handle.get_logs(tail);
+        Ok((id, entries))
+    }
+
     /// Routes an HTTP request to the appropriate service.
     ///
     /// This is called by the proxy server's request handler to delegate

@@ -688,6 +688,62 @@ Events Tree:
     - type, service_id, data, timestamp
 ```
 
+### Per-Service Logging Architecture
+
+Each service has its stdout and stderr captured and stored in a **bounded ring buffer** maintained by the daemon:
+
+**Implementation Details:**
+- **Buffer:** In-memory bounded ring buffer (default: 10,000 lines per service)
+- **Rotation:** Automatic - oldest entries are dropped when buffer is full
+- **Storage:** Each entry includes timestamp, stream (stdout/stderr), and message
+- **Access:** Via CLI (`fabricks service logs`) or REST API (`GET /v1/services/:id/logs`)
+- **Addressing:** Logs can be retrieved by service ID or service name
+
+**Architecture:**
+```
+┌──────────────────────────────────────────────┐
+│          WASM Service Instance               │
+│                                              │
+│  stdout ──┐                                  │
+│           │                                  │
+│  stderr ──┼──────────────────────────────────┼───> Captured by Daemon
+│           │                                  │
+└───────────┴──────────────────────────────────┘
+            │
+            ▼
+┌──────────────────────────────────────────────┐
+│    Daemon: Per-Service Log Buffer            │
+│                                              │
+│  BoundedVecDeque<LogEntry> (10k lines)       │
+│                                              │
+│  LogEntry {                                  │
+│    timestamp: DateTime<Utc>,                 │
+│    stream: "stdout" | "stderr",              │
+│    message: String                           │
+│  }                                           │
+│                                              │
+│  Auto-rotation when full                     │
+└──────────────────────────────────────────────┘
+            │
+            ▼
+    ┌───────────────────────────┐
+    │  GET /v1/services/:id/logs│
+    │  ?tail=N                   │
+    └───────────────────────────┘
+            │
+            ▼
+    ┌───────────────────────────┐
+    │  fabricks service logs    │
+    │  <id> -n N --format text  │
+    └───────────────────────────┘
+```
+
+**Benefits:**
+- Logs accessible without needing to read daemon stdout
+- CLI users can view service-specific logs
+- Bounded memory usage (no unbounded log growth)
+- Fast retrieval by service ID or name
+
 ---
 
 ## Network Architecture
@@ -715,17 +771,42 @@ fn can_connect(from_service: &Service, to_host: &str, to_port: u16) -> bool {
     // 1. Check if services share a network
     let shared_network = from_service.networks.iter()
         .any(|net| to_service.networks.contains(net));
-    
+
     // 2. Check capability grant
     let has_capability = from_service.capabilities.network.connect
         .contains(&format!("{}:{}", to_host, to_port));
-    
+
     // 3. Check policy
     let policy_allows = policy_engine.allows(from_service, to_service);
-    
+
     shared_network && has_capability && policy_allows
 }
 ```
+
+### Default Network
+
+The daemon automatically creates a **default network** at startup with the following characteristics:
+
+- **Name:** `"default"`
+- **Access:** `NetworkAccess::External` - allows external internet access
+- **Purpose:** Provides a convenient default for standalone services that need external connectivity
+
+**Secure by Default:**
+
+Services that don't explicitly join any network are **internal-only** (no external access). This secure-by-default approach requires explicit opt-in to external connectivity:
+
+```bash
+# Internal-only (no external access)
+fabricks service run ./my-service
+
+# With external access via default network
+fabricks service run --network default ./my-service
+
+# Multiple networks (default + custom)
+fabricks service run --network default --network application ./my-service
+```
+
+For mortar compositions, services must explicitly list networks in the `fabricks-mortar.toml` configuration.
 
 ---
 

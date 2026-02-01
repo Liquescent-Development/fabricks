@@ -585,7 +585,8 @@ Runs a module from OCI storage by tag or reference. This is the primary endpoint
   "reference": "hello-http:0.1.0",
   "args": [],
   "env_vars": [],
-  "no_capabilities": false
+  "no_capabilities": false,
+  "networks": ["default"]
 }
 ```
 
@@ -595,6 +596,7 @@ Runs a module from OCI storage by tag or reference. This is the primary endpoint
 | `args` | array | No | Command-line arguments to pass to the module |
 | `env_vars` | array | No | Environment variable overrides as `[key, value]` tuples |
 | `no_capabilities` | boolean | No | Disable capability enforcement (default: false) |
+| `networks` | array | No | Array of network names to join (e.g., `["default", "application"]`). If omitted or empty, service is internal-only. Use `["default"]` for external access. |
 
 **Response:**
 ```json
@@ -840,57 +842,80 @@ curl --unix-socket /var/run/fabricks.sock \
 
 ### Get Service Logs
 
-**Endpoint:** `GET /v1/services/{id}/logs`
+**Endpoint:** `GET /v1/services/:id/logs`
+
+Retrieves logs for a service. The `:id` parameter can be either a service ID or service name.
 
 **Query Parameters:**
-- `follow` - Stream logs (default: false)
-- `tail` - Number of lines from end (default: all)
-- `since` - Timestamp or duration
-- `timestamps` - Include timestamps (default: false)
-- `instance` - Specific instance ID
+- `tail` - Number of lines from end (default: all, 0 means all)
 
-**Response (non-streaming):**
+**Log Storage:**
+
+Service stdout and stderr are captured by the daemon in a **per-service bounded ring buffer** (default: 10,000 lines). Logs are stored in memory with automatic rotation when the buffer is full. Each log entry includes:
+- Timestamp (when the log was captured)
+- Stream (`"stdout"` or `"stderr"`)
+- Message (the actual log line)
+
+**Response:**
 ```json
 {
   "status": "success",
   "data": {
-    "logs": [
+    "id": "srv_abc123",
+    "entries": [
       {
-        "timestamp": "2025-01-15T10:23:45Z",
-        "instance": "api-service-a1b2c3-0",
-        "message": "[INFO] Starting server on :8080"
+        "timestamp": "2025-01-15T10:23:45.123456789Z",
+        "stream": "stdout",
+        "message": "Starting server on :8080"
       },
       {
-        "timestamp": "2025-01-15T10:23:46Z",
-        "instance": "api-service-a1b2c3-1",
-        "message": "[INFO] Starting server on :8080"
+        "timestamp": "2025-01-15T10:23:45.234567890Z",
+        "stream": "stdout",
+        "message": "Connected to database"
+      },
+      {
+        "timestamp": "2025-01-15T10:24:00.345678901Z",
+        "stream": "stderr",
+        "message": "Warning: deprecated API usage"
       }
-    ]
+    ],
+    "count": 3
   }
 }
 ```
 
-**Response (streaming with `follow=true`):**
+**Response Fields:**
+- `id` - Service ID
+- `entries` - Array of log entries
+  - `timestamp` - RFC3339 timestamp with nanosecond precision
+  - `stream` - Either `"stdout"` or `"stderr"`
+  - `message` - Log message text
+- `count` - Number of log entries returned
 
-Server-Sent Events (SSE) stream:
-```
-event: log
-data: {"timestamp":"2025-01-15T10:23:45Z","instance":"api-service-a1b2c3-0","message":"[INFO] Request processed"}
-
-event: log
-data: {"timestamp":"2025-01-15T10:23:46Z","instance":"api-service-a1b2c3-1","message":"[INFO] Request processed"}
-```
-
-**cURL Example:**
+**cURL Examples:**
 ```bash
+# Get all logs by service name
+curl --unix-socket /var/run/fabricks.sock \
+  "http://localhost/v1/services/my-service/logs"
+
+# Get all logs by service ID
+curl --unix-socket /var/run/fabricks.sock \
+  "http://localhost/v1/services/srv_abc123/logs"
+
 # Get last 100 lines
 curl --unix-socket /var/run/fabricks.sock \
-  "http://localhost/v1/services/api-service-a1b2c3/logs?tail=100"
+  "http://localhost/v1/services/my-service/logs?tail=100"
 
-# Stream logs
+# Get all logs (explicit)
 curl --unix-socket /var/run/fabricks.sock \
-  "http://localhost/v1/services/api-service-a1b2c3/logs?follow=true"
+  "http://localhost/v1/services/my-service/logs?tail=0"
 ```
+
+**Notes:**
+- If service is not found, returns 404
+- If service has no logs yet, returns empty `entries` array with `count: 0`
+- Logs are per-service (not per-instance) - all instances write to the same log buffer
+- Future: streaming with SSE, filtering by instance, time-based filtering
 
 ---
 

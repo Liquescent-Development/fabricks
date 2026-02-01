@@ -43,5 +43,18 @@ pub async fn run(args: &DaemonArgs) -> Result<()> {
 
             Ok(())
         }
+
+        DaemonCommands::Stop { socket } => {
+            let client = match socket {
+                Some(path) => DaemonClient::with_socket(path.clone()),
+                None => DaemonClient::new(),
+            };
+
+            output::writeln("Stopping daemon...")?;
+            let response = client.shutdown().await?;
+            output::writeln(&response.message)?;
+
+            Ok(())
+        }
     }
 }

@@ -63,6 +63,10 @@ pub struct RunModuleRequest {
     /// Whether to disable capability enforcement.
     #[serde(default)]
     pub no_capabilities: bool,
+
+    /// Networks to join the service to (by name).
+    #[serde(default)]
+    pub networks: Vec<String>,
 }
 
 /// Request to scale a service.
@@ -192,9 +196,41 @@ pub async fn run_module(
 
     let manager = state.service_manager.write().await;
 
-    // Create and start the service
+    // Validate requested networks exist before creating the service
+    if !req.networks.is_empty() {
+        for network_name in &req.networks {
+            if state
+                .network_manager
+                .get_network_by_name(network_name)
+                .await
+                .is_none()
+            {
+                return Json(error_response(&DaemonError::NetworkNotFound(
+                    network_name.clone(),
+                )));
+            }
+        }
+    }
+
+    // Create the service
+    let service_name = fabrickfile.info.name.clone();
     match manager.create_service(config).await {
         Ok(id) => {
+            // Join requested networks
+            for network_name in &req.networks {
+                if let Some(network) = state
+                    .network_manager
+                    .get_network_by_name(network_name)
+                    .await
+                    && let Err(e) = state
+                        .network_manager
+                        .add_service(&network.id, &id, &service_name)
+                        .await
+                {
+                    return Json(error_response(&e));
+                }
+            }
+
             // Start the service
             if let Err(e) = manager.start_service(&id).await {
                 return Json(error_response(&e));
@@ -202,7 +238,7 @@ pub async fn run_module(
 
             Json(ApiResponse::success(CreateServiceResponse {
                 id,
-                name: fabrickfile.info.name.clone(),
+                name: service_name,
             }))
         }
         Err(e) => Json(error_response(&e)),
@@ -491,6 +527,47 @@ fn error_response<T: serde::Serialize>(err: &DaemonError) -> ApiResponse<T> {
             message,
             details: None,
         },
+    }
+}
+
+/// Query parameters for the logs endpoint.
+#[derive(Debug, Deserialize)]
+pub struct LogsQuery {
+    /// Return only the last N log entries.
+    pub tail: Option<usize>,
+}
+
+/// Response from the logs endpoint.
+#[derive(Debug, Serialize)]
+pub struct ServiceLogsResponse {
+    /// Service ID.
+    pub id: String,
+    /// Log entries.
+    pub entries: Vec<crate::service::LogEntry>,
+    /// Total number of entries returned.
+    pub count: usize,
+}
+
+/// GET `/v1/services/{id}/logs`
+///
+/// Returns captured stdout/stderr log entries for a service.
+pub async fn get_service_logs(
+    State(state): State<AppState>,
+    Path(id_or_name): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<LogsQuery>,
+) -> Json<ApiResponse<ServiceLogsResponse>> {
+    let manager = state.service_manager.read().await;
+
+    match manager.get_service_logs(&id_or_name, query.tail).await {
+        Ok((id, entries)) => {
+            let count = entries.len();
+            Json(ApiResponse::success(ServiceLogsResponse {
+                id,
+                entries,
+                count,
+            }))
+        }
+        Err(e) => Json(error_response(&e)),
     }
 }
 

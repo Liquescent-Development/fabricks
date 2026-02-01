@@ -725,11 +725,21 @@ fabricks service run [OPTIONS] <PATH|TAG>
         --env-file <FILE>           Read environment from file
     -v, --volume <SRC:DEST>         Mount volumes (can be used multiple times)
         --name <NAME>               Assign a name to the instance
-        --network <NETWORK>         Connect to network
+        --network <NETWORK>         Connect to network (can be specified multiple times)
         --rm                        Automatically remove when stopped
     -d, --detach                    Run in background
         --restart <POLICY>          Restart policy [default: no] [possible: no, on-failure, always]
 ```
+
+**Network Access:**
+
+By default, services run through the daemon are **internal-only** (no external access) for security. To enable network access:
+
+- **For external access:** Use `--network default` to join the default network which has `NetworkAccess::External`
+- **For internal service-to-service communication:** Specify custom network names with `--network <name>`
+- **Multiple networks:** Specify `--network` multiple times to join multiple networks
+
+The **default network** is automatically created at daemon startup with external access enabled.
 
 **How it Works:**
 
@@ -753,14 +763,20 @@ fabricks service run ./examples/nodejs-hello
 # Run by OCI tag
 fabricks service run nodejs-hello:1.0.0
 
-# Run with port mapping
-fabricks service run -p 8080:8089 ./examples/nodejs-hello
+# Run with port mapping and network access
+fabricks service run -p 8080:8089 --network default ./examples/nodejs-hello
 
 # Run with environment variables
-fabricks service run -e LOG_LEVEL=debug nodejs-hello:1.0.0
+fabricks service run -e LOG_LEVEL=debug --network default nodejs-hello:1.0.0
 
-# Run in background with auto-restart
-fabricks service run -d --restart on-failure nodejs-hello:1.0.0
+# Run in background with auto-restart and external access
+fabricks service run -d --restart on-failure --network default nodejs-hello:1.0.0
+
+# Run on multiple networks (default + custom)
+fabricks service run --network default --network application ./examples/nodejs-hello
+
+# Run internal-only (no external access - secure by default)
+fabricks service run ./examples/internal-worker
 ```
 
 **Output:**
@@ -916,34 +932,65 @@ fabricks service logs [OPTIONS] <SERVICE>
 
 **Options:**
 ```
-        --follow            Follow log output
-        --tail <N>          Number of lines to show from end [default: all]
-        --since <TIME>      Show logs since timestamp or duration
-        --timestamps        Show timestamps
-        --instance <ID>     Show logs from specific instance
+    -n, --tail <N>          Number of lines to show from end [default: all]
+        --format <FORMAT>   Output format [default: text] [possible: text, json]
+        --follow            Follow log output (future)
+        --since <TIME>      Show logs since timestamp or duration (future)
+        --timestamps        Show timestamps (future)
+        --instance <ID>     Show logs from specific instance (future)
 ```
+
+**Log Capture:**
+
+Service stdout and stderr are captured by the daemon in a **per-service bounded ring buffer** (default: 10,000 lines). Logs are stored in memory and rotated automatically when the buffer is full. This allows CLI users to view logs without needing access to daemon stdout.
 
 **Examples:**
 ```bash
-# View service logs
+# View all service logs
 fabricks service logs product-service
 
-# Follow logs
-fabricks service logs --follow product-service
+# View by service ID
+fabricks service logs srv_abc123
 
 # Last 100 lines
 fabricks service logs --tail 100 product-service
+fabricks service logs -n 100 product-service
 
-# Logs from specific instance
-fabricks service logs --instance product-service-0 product-service
+# JSON format (structured output)
+fabricks service logs --format json product-service
+
+# Text format (human-readable, default)
+fabricks service logs --format text product-service
 ```
 
-**Output:**
+**Output (text format):**
 ```
-2025-01-15T10:23:45Z [INFO] Starting server on :8080
-2025-01-15T10:23:45Z [INFO] Connected to database
-2025-01-15T10:24:00Z [INFO] Request: GET /products
-2025-01-15T10:24:01Z [INFO] Response: 200 OK (15ms)
+2025-01-15T10:23:45Z [stdout] Starting server on :8080
+2025-01-15T10:23:45Z [stdout] Connected to database
+2025-01-15T10:24:00Z [stdout] Request: GET /products
+2025-01-15T10:24:01Z [stdout] Response: 200 OK (15ms)
+2025-01-15T10:24:02Z [stderr] Warning: deprecated API usage
+```
+
+**Output (json format):**
+```json
+[
+  {
+    "timestamp": "2025-01-15T10:23:45Z",
+    "stream": "stdout",
+    "message": "Starting server on :8080"
+  },
+  {
+    "timestamp": "2025-01-15T10:23:45Z",
+    "stream": "stdout",
+    "message": "Connected to database"
+  },
+  {
+    "timestamp": "2025-01-15T10:24:02Z",
+    "stream": "stderr",
+    "message": "Warning: deprecated API usage"
+  }
+]
 ```
 
 ---
