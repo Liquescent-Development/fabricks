@@ -8,23 +8,23 @@ use std::path::PathBuf;
 use fabricks_e2e::helpers::TestEnv;
 use tempfile::TempDir;
 
-/// Path to the real hello-world WASM component.
-fn hello_world_wasm_path() -> PathBuf {
+/// Path to the real rust-hello WASM component.
+fn rust_hello_wasm_path() -> PathBuf {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     PathBuf::from(manifest_dir)
         .parent()
         .expect("should have parent")
-        .join("examples/hello-world/target/wasm32-wasip2/release/hello-world.wasm")
+        .join("examples/rust-hello/target/wasm32-wasip1/release/rust_hello.wasm")
 }
 
-/// Creates a mortar file with a volume definition using the real hello-world WASM.
+/// Creates a mortar file with a volume definition using the real rust-hello WASM.
 fn create_mortar_with_volume(temp_dir: &TempDir) -> PathBuf {
-    let wasm_path = hello_world_wasm_path();
+    let wasm_path = rust_hello_wasm_path();
 
     // Ensure the WASM exists
     assert!(
         wasm_path.exists(),
-        "hello-world WASM not found at {:?}. Run: cd examples/hello-world && cargo build --target wasm32-wasip2 --release",
+        "rust-hello WASM not found at {:?}. Run: fabricks service run examples/rust-hello",
         wasm_path
     );
 
@@ -81,10 +81,10 @@ size = "100Mi"
 #[tokio::test]
 async fn test_volume_created_during_mortar_deploy() {
     // Skip if WASM not built
-    let wasm_path = hello_world_wasm_path();
+    let wasm_path = rust_hello_wasm_path();
     if !wasm_path.exists() {
         eprintln!(
-            "Skipping test: hello-world WASM not found. Run: cd examples/hello-world && cargo build --target wasm32-wasip2 --release"
+            "Skipping test: rust-hello WASM not found. Run: fabricks service run examples/rust-hello"
         );
         return;
     }

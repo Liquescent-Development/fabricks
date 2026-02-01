@@ -47,10 +47,10 @@ fn test_hello_world_output_capture() {
         .with_env_filter("fabricks_runtime=debug")
         .try_init();
 
-    // Load the hello-world WASM component
+    // Load the rust-hello WASM component
     let wasm_path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../examples/hello-world/target/wasm32-wasip1/release/hello_world.wasm"
+        "/../examples/rust-hello/target/wasm32-wasip1/release/rust_hello.wasm"
     );
 
     eprintln!("Loading WASM from: {}", wasm_path);
@@ -58,7 +58,7 @@ fn test_hello_world_output_capture() {
     let wasm_bytes = match std::fs::read(wasm_path) {
         Ok(bytes) => bytes,
         Err(e) => {
-            eprintln!("Skipping test - WASM not found: {}. Run `cargo build` in hello-world first.", e);
+            eprintln!("Skipping test - WASM not found: {}. Run `fabricks service run examples/rust-hello` first.", e);
             return;
         }
     };
@@ -110,7 +110,7 @@ fn test_hello_world_output_capture() {
     // Verify we captured some output
     assert!(
         !entries.is_empty(),
-        "Expected to capture stdout from hello-world, but got no logs"
+        "Expected to capture stdout from rust-hello, but got no logs"
     );
 
     // Check for expected output

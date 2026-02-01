@@ -11,8 +11,8 @@ members = [
     "fabricks-runtime",
     "fabricks-e2e",
 ]
-# Examples that use cargo-component (must be built separately)
-exclude = ["examples/hello-http"]
+# Examples that use cargo-component or TinyGo (must be built separately)
+exclude = ["examples/rust-hello", "examples/rust-http"]
 
 [workspace.package]
 edition = "2024"

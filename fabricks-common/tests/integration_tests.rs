@@ -6,20 +6,20 @@ use std::path::Path;
 
 use fabricks_common::parser::{parse_fabrickfile, parse_fabrickfile_str, parse_mortar_file_str};
 
-/// Test parsing the hello-world example Fabrickfile.
+/// Test parsing the rust-hello example Fabrickfile.
 #[test]
-fn test_parse_hello_world_fabrickfile() {
-    let path = Path::new("../examples/hello-world/Fabrickfile");
+fn test_parse_rust_hello_fabrickfile() {
+    let path = Path::new("../examples/rust-hello/Fabrickfile");
     let result = parse_fabrickfile(path);
 
     assert!(
         result.is_ok(),
-        "Failed to parse hello-world Fabrickfile: {result:?}"
+        "Failed to parse rust-hello Fabrickfile: {result:?}"
     );
     let fabrickfile = result.unwrap_or_else(|e| panic!("unexpected error: {e}"));
 
     assert_eq!(fabrickfile.fabrick_version, "1.0");
-    assert_eq!(fabrickfile.info.name, "hello-world");
+    assert_eq!(fabrickfile.info.name, "rust-hello");
     assert_eq!(fabrickfile.info.version, "0.1.0");
     // CLI service with no network capabilities
     assert!(!fabrickfile.capabilities.can_listen(8080));

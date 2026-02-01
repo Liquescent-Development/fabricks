@@ -11,7 +11,7 @@ use crate::output;
 /// Information about a stored image.
 #[derive(Debug, serde::Serialize)]
 struct ImageInfo {
-    /// Image reference (e.g., "hello-http:0.1.0").
+    /// Image reference (e.g., "rust-http:0.1.0").
     reference: String,
     /// Manifest digest.
     digest: String,

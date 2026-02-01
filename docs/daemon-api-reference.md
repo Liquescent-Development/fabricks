@@ -582,7 +582,7 @@ Runs a module from OCI storage by tag or reference. This is the primary endpoint
 **Request Body:**
 ```json
 {
-  "reference": "hello-http:0.1.0",
+  "reference": "rust-http:0.1.0",
   "args": [],
   "env_vars": [],
   "no_capabilities": false,
@@ -604,7 +604,7 @@ Runs a module from OCI storage by tag or reference. This is the primary endpoint
   "status": "success",
   "data": {
     "id": "svc-a1b2c3d4",
-    "name": "hello-http"
+    "name": "rust-http"
   }
 }
 ```
@@ -614,7 +614,7 @@ Runs a module from OCI storage by tag or reference. This is the primary endpoint
 curl --unix-socket /var/run/fabricks.sock \
   -X POST \
   -H "Content-Type: application/json" \
-  -d '{"reference":"hello-http:0.1.0"}' \
+  -d '{"reference":"rust-http:0.1.0"}' \
   http://localhost/v1/services/run-module
 ```
 

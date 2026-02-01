@@ -1,0 +1,16 @@
+# Rust Hello World Example
+# A simple CLI service built with Rust using wasi:cli
+
+fabrick_version = "1.0"
+
+[info]
+name = "rust-hello"
+version = "0.1.0"
+type = "command"
+description = "A simple Rust CLI service that prints a greeting"
+
+[from]
+source = "rust"
+
+[source]
+path = "."

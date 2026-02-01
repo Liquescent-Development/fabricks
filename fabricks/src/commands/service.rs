@@ -8,6 +8,7 @@ use fabricks_common::{Fabrickfile, parse_fabrickfile};
 use fabricks_oci::{FabricksModule, LocalStorage};
 use tracing::{debug, info};
 
+use crate::builders::{BuilderConfig, build_with_source};
 use crate::cli::{OutputFormat, ServiceArgs, ServiceCommands};
 use crate::daemon_client::DaemonClient;
 use crate::output;
@@ -61,7 +62,7 @@ pub async fn run(args: &ServiceArgs) -> Result<()> {
 /// Reference types:
 /// - Local file path (exists on filesystem) -> build if needed, store, load from storage
 /// - Registry reference (contains '/') -> not yet supported
-/// - Local storage tag (e.g., "hello-http:0.1.0") -> load from storage
+/// - Local storage tag (e.g., "rust-http:0.1.0") -> load from storage
 pub async fn resolve_module_reference(reference: &str) -> Result<ModuleSource> {
     let path = Path::new(reference);
 
@@ -78,7 +79,7 @@ pub async fn resolve_module_reference(reference: &str) -> Result<ModuleSource> {
         );
     }
 
-    // 3. Local tag (e.g., "hello-http:0.1.0")
+    // 3. Local tag (e.g., "rust-http:0.1.0")
     resolve_from_storage(reference).await
 }
 
@@ -129,12 +130,32 @@ async fn resolve_from_path(path: &Path) -> Result<ModuleSource> {
     })
 }
 
-/// Build a module using its build command.
+/// Build a module using language builders or custom build command.
 fn build_module(fabrickfile: &Fabrickfile, workdir: &Path) -> Result<Vec<u8>> {
+    // Check if we should use a language builder
+    let use_builder = fabrickfile
+        .from
+        .as_ref()
+        .is_some_and(|from| from.source.is_some());
+
+    if use_builder {
+        // Use language builder (Rust, Go, etc.)
+        info!("Using language builder");
+        let config = BuilderConfig {
+            fabrickfile,
+            workdir,
+            release: true,
+        };
+
+        let output = build_with_source(&config)?;
+        return std::fs::read(&output.wasm_path).context("Failed to read built WASM file");
+    }
+
+    // Fall back to custom build command
     let build = fabrickfile
         .build
         .as_ref()
-        .context("Fabrickfile has no [build] section")?;
+        .context("Fabrickfile has no [build] section and no [from].source specified")?;
 
     // Determine the actual working directory
     let actual_workdir = if let Some(ref build_workdir) = build.workdir {
