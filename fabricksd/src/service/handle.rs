@@ -15,6 +15,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use fabricks_runtime::http::{HttpRuntime, HttpRuntimeConfig, OutboundHandler};
+use fabricks_runtime::output::{LogCaptureSink, LogStream, LogWriter};
 use fabricks_runtime::tcp::{TcpRuntime, TcpRuntimeConfig};
 use fabricks_runtime::{HttpRequest, HttpResponse, Runtime, RuntimeConfig, RuntimePool};
 
@@ -23,6 +24,7 @@ use crate::proxy::SharedProxyServer;
 
 use fabricks_common::Capabilities;
 
+use super::logs::{LogEntry, ServiceLogBuffer};
 use super::types::{Instance, InstanceState, ServiceConfig, ServiceDetail, ServiceState, State};
 
 /// Outbound handler that validates connections based on service capabilities.
@@ -76,6 +78,9 @@ pub struct ServiceHandle {
 
     /// Outbound handler for validating outbound HTTP requests.
     outbound_handler: RwLock<Option<Arc<dyn OutboundHandler>>>,
+
+    /// Per-service log buffer for capturing stdout/stderr.
+    log_buffer: Arc<ServiceLogBuffer>,
 }
 
 /// Handle for a running instance.
@@ -117,6 +122,7 @@ impl ServiceHandle {
             http_runtime: RwLock::new(None),
             tcp_runtime: RwLock::new(None),
             outbound_handler: RwLock::new(None),
+            log_buffer: Arc::new(ServiceLogBuffer::default()),
         }
     }
 
@@ -137,6 +143,7 @@ impl ServiceHandle {
             http_runtime: RwLock::new(None),
             tcp_runtime: RwLock::new(None),
             outbound_handler: RwLock::new(None),
+            log_buffer: Arc::new(ServiceLogBuffer::default()),
         }
     }
 
@@ -591,10 +598,15 @@ impl ServiceHandle {
         let config = state.config.clone();
         drop(state);
 
-        // Create runtime configuration from service config
+        // Create runtime configuration from service config.
+        // Default fuel limit of 10 billion allows substantial computation while
+        // providing a safety cap (similar to Docker's default resource limits).
+        const DEFAULT_FUEL_LIMIT: u64 = 10_000_000_000;
+
         let runtime_config = RuntimeConfig {
             capabilities: config.capabilities.clone(),
             args: config.args.clone(),
+            fuel_limit: Some(DEFAULT_FUEL_LIMIT),
             ..Default::default()
         };
 
@@ -607,8 +619,29 @@ impl ServiceHandle {
         let mut instance = Instance::new(service_id.clone());
         let instance_id = instance.id.clone();
 
-        // Spawn the WASM execution task
-        let task = tokio::spawn(async move { run_wasm_instance(&runtime) });
+        // Create log capture sinks for stdout/stderr
+        let log_buffer = Arc::clone(&self.log_buffer);
+        let stdout_sink = LogCaptureSink::new(log_buffer.clone() as Arc<dyn LogWriter>, LogStream::Stdout);
+        let stderr_sink = LogCaptureSink::new(log_buffer as Arc<dyn LogWriter>, LogStream::Stderr);
+
+        // Spawn the WASM execution task with log capture.
+        // Use spawn_blocking since run_wasm_instance is a synchronous blocking operation.
+        let task_service_id = service_id.clone();
+        let task = tokio::spawn(async move {
+            info!(service_id = %task_service_id, "Spawning blocking task for WASM execution");
+            let blocking_result = tokio::task::spawn_blocking(move || {
+                info!("Inside spawn_blocking, calling run_wasm_instance");
+                let result = run_wasm_instance(&runtime, stdout_sink, stderr_sink);
+                info!("run_wasm_instance completed");
+                result
+            })
+            .await;
+            info!(service_id = %task_service_id, "Blocking task completed");
+            blocking_result.map_err(|e| DaemonError::ServiceError {
+                id: task_service_id.clone(),
+                reason: format!("Task join error: {e}"),
+            })?
+        });
 
         instance.set_state(InstanceState::Running);
 
@@ -760,6 +793,15 @@ impl ServiceHandle {
         f(&mut state);
     }
 
+    /// Returns captured log entries for this service.
+    ///
+    /// # Arguments
+    ///
+    /// * `tail` - If `Some(n)`, return only the last `n` entries.
+    pub fn get_logs(&self, tail: Option<usize>) -> Vec<LogEntry> {
+        self.log_buffer.entries(tail)
+    }
+
     /// Marks the service for deletion.
     ///
     /// # Errors
@@ -780,10 +822,13 @@ impl ServiceHandle {
     }
 }
 
-/// Runs a WASM instance to completion.
-fn run_wasm_instance(runtime: &Runtime) -> Result<()> {
-    // Run the WASM module
-    runtime.run()?;
+/// Runs a WASM instance to completion with log capture.
+fn run_wasm_instance(
+    runtime: &Runtime,
+    stdout: LogCaptureSink,
+    stderr: LogCaptureSink,
+) -> Result<()> {
+    runtime.run_with_output(stdout, stderr)?;
     Ok(())
 }
 

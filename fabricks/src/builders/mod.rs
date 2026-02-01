@@ -8,8 +8,9 @@
 //!
 //! - **Rust**: Uses `cargo component build` for native WASM component compilation
 //! - **Python**: Uses `componentize-py` to bundle `CPython` + user code
-//! - **Go**: Uses `tinygo` for WASM compilation (planned)
+//! - **Go**: Uses `tinygo build -target=wasip2` for WASM component compilation
 //! - **JavaScript**: Uses `javy` or `componentize-js` (planned)
+//! - **C#/.NET**: Planned (tracking tooling maturity)
 //!
 //! ## Example
 //!
@@ -24,6 +25,7 @@
 //! entrypoint = "app:handler"
 //! ```
 
+mod go;
 mod python;
 mod rust;
 
@@ -33,6 +35,7 @@ use anyhow::{Result, bail};
 use fabricks_common::models::fabrickfile::SourceLanguage;
 use fabricks_common::Fabrickfile;
 
+pub use go::GoBuilder;
 pub use python::PythonBuilder;
 pub use rust::RustBuilder;
 
@@ -76,17 +79,15 @@ pub fn get_builder(language: SourceLanguage) -> Result<Box<dyn Builder>> {
     match language {
         SourceLanguage::Rust => Ok(Box::new(RustBuilder)),
         SourceLanguage::Python => Ok(Box::new(PythonBuilder)),
-        SourceLanguage::Go => bail!(
-            "Go builder is not yet implemented.\n\
-             Track progress at: https://github.com/user/fabricks/issues/XX"
+        SourceLanguage::Go => Ok(Box::new(GoBuilder)),
+        SourceLanguage::Csharp => bail!(
+            "C# builder is not yet implemented.\n\
+             The .NET WASI tooling (componentize-dotnet) is still maturing.\n\
+             Track progress at: https://github.com/Liquescent-Development/fabricks/issues/34"
         ),
         SourceLanguage::Javascript => bail!(
             "JavaScript builder is not yet implemented.\n\
-             Track progress at: https://github.com/user/fabricks/issues/XX"
-        ),
-        SourceLanguage::Csharp => bail!(
-            "C# builder is not yet implemented.\n\
-             Track progress at: https://github.com/user/fabricks/issues/XX"
+             Track progress at: https://github.com/Liquescent-Development/fabricks/issues"
         ),
     }
 }

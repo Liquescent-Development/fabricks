@@ -74,6 +74,13 @@ pub struct DaemonConfigInfo {
     pub max_services: u32,
 }
 
+/// Shutdown response.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct ShutdownResponse {
+    /// Message confirming shutdown.
+    pub message: String,
+}
+
 /// Service information.
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct ServiceInfo {
@@ -240,6 +247,9 @@ pub struct RunModuleRequest {
     /// Whether to disable capability enforcement.
     #[serde(default)]
     pub no_capabilities: bool,
+    /// Networks to join the service to (by name).
+    #[serde(default)]
+    pub networks: Vec<String>,
 }
 
 /// Scale service request.
@@ -285,6 +295,30 @@ pub struct ProjectServicesResponse {
     pub services: Vec<ServiceInfo>,
     /// Total count.
     pub total: usize,
+}
+
+// ==================== Logs Types ====================
+
+/// Service logs response.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct ServiceLogsResponse {
+    /// Service ID.
+    pub id: String,
+    /// Log entries.
+    pub entries: Vec<LogEntry>,
+    /// Total number of entries returned.
+    pub count: usize,
+}
+
+/// A single log entry.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct LogEntry {
+    /// Timestamp when the line was captured.
+    pub timestamp: String,
+    /// Which stream this came from (stdout or stderr).
+    pub stream: String,
+    /// The log line content.
+    pub message: String,
 }
 
 // ==================== Network Types ====================
@@ -524,6 +558,19 @@ impl DaemonClient {
         self.delete(&format!("/v1/services/{id}")).await
     }
 
+    /// Gets log entries for a service.
+    pub async fn get_service_logs(
+        &self,
+        id: &str,
+        tail: Option<usize>,
+    ) -> Result<ServiceLogsResponse> {
+        let mut path = format!("/v1/services/{id}/logs");
+        if let Some(n) = tail {
+            path = format!("{path}?tail={n}");
+        }
+        self.get(&path).await
+    }
+
     // ==================== Mortar Operations ====================
 
     /// Deploys a mortar project.
@@ -601,6 +648,18 @@ impl DaemonClient {
     /// Deletes a volume.
     pub async fn delete_volume(&self, id: &str) -> Result<()> {
         self.delete(&format!("/v1/volumes/{id}")).await
+    }
+
+    // ==================== Daemon Operations ====================
+
+    /// Requests graceful daemon shutdown.
+    ///
+    /// This sends a shutdown request to the daemon, which will stop accepting
+    /// new connections and gracefully shut down all running services.
+    pub async fn shutdown(&self) -> Result<ShutdownResponse> {
+        // Use an empty struct as the body since POST requires a body
+        self.post("/v1/daemon/shutdown", &serde_json::json!({}))
+            .await
     }
 
     // ==================== HTTP Methods ====================

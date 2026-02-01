@@ -895,6 +895,14 @@ output = "target/wasm32-wasi/release/my_service.wasm"
 listen = [8080]
 ```
 
+**Note:** When running this service standalone (not in a mortar composition), use `--network default` to enable external access:
+
+```bash
+fabricks service run --network default ./my-service
+```
+
+Without `--network`, the service will be internal-only (secure by default).
+
 ### Minimal Fabrickfile (Pre-built Image - TCP Service)
 ```toml
 fabrick_version = "1.0"
@@ -934,6 +942,12 @@ path = "."
 [capabilities.network]
 listen = [3000]
 connect = ["backend:8080"]
+```
+
+**Note:** For standalone services with external access, use `--network default`:
+
+```bash
+fabricks service run --network default ./api-gateway
 ```
 
 ### Minimal Fabrickfile (Python HTTP Service with Runtime)

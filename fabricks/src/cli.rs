@@ -302,6 +302,16 @@ pub enum DaemonCommands {
         #[arg(long)]
         socket: Option<PathBuf>,
     },
+
+    /// Gracefully stop the daemon.
+    ///
+    /// Sends a shutdown signal to the running daemon, allowing it to
+    /// cleanly stop all services and release resources.
+    Stop {
+        /// Custom socket path.
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
 }
 
 /// Arguments for service commands.
@@ -343,6 +353,13 @@ pub enum ServiceCommands {
         /// - ghcr.io/user/module:latest (registry reference)
         #[arg(default_value = ".")]
         reference: String,
+
+        /// Networks to join the service to.
+        ///
+        /// Use `--network default` to allow external access.
+        /// Can be specified multiple times for multiple networks.
+        #[arg(long = "network")]
+        networks: Vec<String>,
 
         /// Output format.
         #[arg(short, long, value_enum, default_value = "text")]
@@ -390,6 +407,22 @@ pub enum ServiceCommands {
         /// Force removal (stop first if running).
         #[arg(short, long)]
         force: bool,
+    },
+
+    /// View logs for a service.
+    ///
+    /// Displays captured stdout/stderr from the service's WASM instances.
+    Logs {
+        /// Service ID or name.
+        id: String,
+
+        /// Show only the last N lines.
+        #[arg(short = 'n', long)]
+        tail: Option<usize>,
+
+        /// Output format.
+        #[arg(short, long, value_enum, default_value = "text")]
+        format: OutputFormat,
     },
 }
 

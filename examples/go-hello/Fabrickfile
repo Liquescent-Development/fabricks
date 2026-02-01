@@ -1,0 +1,16 @@
+# Go Hello World Example
+# A simple command-line WASM service built with TinyGo
+
+fabrick_version = "1.0"
+
+[info]
+name = "go-hello"
+version = "0.1.0"
+type = "command"
+description = "A simple Go command-line service that prints a greeting"
+
+[from]
+source = "go"
+
+[source]
+path = "."

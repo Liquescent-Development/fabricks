@@ -219,6 +219,10 @@ impl AppState {
     ///
     /// Returns an error if initialization fails.
     pub async fn initialize(&self) -> Result<()> {
+        // Load persisted network state and ensure default network exists
+        self.network_manager.load_state().await?;
+        self.network_manager.ensure_default_network().await?;
+
         // Set up HTTP request routing from proxy server to service manager
         let service_manager = Arc::clone(&self.service_manager);
 

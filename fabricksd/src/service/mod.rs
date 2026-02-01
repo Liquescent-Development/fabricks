@@ -45,11 +45,13 @@
 
 pub mod dependency;
 pub mod handle;
+pub mod logs;
 pub mod manager;
 pub mod types;
 
 // Re-export main types
 pub use handle::{CapabilityOutboundHandler, ServiceHandle};
+pub use logs::{LogEntry, ServiceLogBuffer};
 pub use manager::ServiceManager;
 pub use types::{
     Instance, InstanceState, NetworkAttachment, ReplicaState, ServiceConfig, ServiceDetail,

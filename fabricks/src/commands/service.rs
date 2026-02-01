@@ -40,14 +40,19 @@ pub async fn run(args: &ServiceArgs) -> Result<()> {
 
     match &args.command {
         ServiceCommands::List { format } => list_services(&client, *format).await,
-        ServiceCommands::Run { reference, format } => {
-            run_service(&client, reference, *format).await
-        }
+        ServiceCommands::Run {
+            reference,
+            networks,
+            format,
+        } => run_service(&client, reference, networks, *format).await,
         ServiceCommands::Inspect { id, format } => inspect_service(&client, id, *format).await,
         ServiceCommands::Start { id } => start_service(&client, id).await,
         ServiceCommands::Stop { id } => stop_service(&client, id).await,
         ServiceCommands::Scale { id, replicas } => scale_service(&client, id, *replicas).await,
         ServiceCommands::Remove { id, force } => remove_service(&client, id, *force).await,
+        ServiceCommands::Logs { id, tail, format } => {
+            service_logs(&client, id, *tail, *format).await
+        }
     }
 }
 
@@ -335,7 +340,12 @@ fn get_local_storage() -> Result<LocalStorage> {
 }
 
 /// Run a service from a module reference.
-async fn run_service(client: &DaemonClient, reference: &str, format: OutputFormat) -> Result<()> {
+async fn run_service(
+    client: &DaemonClient,
+    reference: &str,
+    networks: &[String],
+    format: OutputFormat,
+) -> Result<()> {
     let ModuleSource::Storage { tag, .. } = resolve_module_reference(reference).await?;
 
     output::writeln(&format!("Running module: {tag}"))?;
@@ -347,6 +357,7 @@ async fn run_service(client: &DaemonClient, reference: &str, format: OutputForma
         args: Vec::new(),
         env_vars: Vec::new(),
         no_capabilities: false,
+        networks: networks.to_vec(),
     };
 
     let response = client.run_module(req).await?;
@@ -394,7 +405,7 @@ async fn inspect_service(client: &DaemonClient, id: &str, format: OutputFormat) 
             // Show bound ports
             if !detail.ports.is_empty() {
                 let ports_str: Vec<String> =
-                    detail.ports.iter().map(|p| p.to_string()).collect();
+                    detail.ports.iter().map(ToString::to_string).collect();
                 output::writeln(&format!("  Ports:      {}", ports_str.join(", ")))?;
             }
 
@@ -456,16 +467,16 @@ async fn inspect_service(client: &DaemonClient, id: &str, format: OutputFormat) 
                 output::writeln("Health Check:")?;
                 if let Some(obj) = hc.as_object() {
                     if let Some(endpoint) = obj.get("endpoint") {
-                        output::writeln(&format!("  Endpoint:   {}", endpoint))?;
+                        output::writeln(&format!("  Endpoint:   {endpoint}"))?;
                     }
                     if let Some(interval) = obj.get("interval") {
-                        output::writeln(&format!("  Interval:   {}", interval))?;
+                        output::writeln(&format!("  Interval:   {interval}"))?;
                     }
                     if let Some(timeout) = obj.get("timeout") {
-                        output::writeln(&format!("  Timeout:    {}", timeout))?;
+                        output::writeln(&format!("  Timeout:    {timeout}"))?;
                     }
                     if let Some(retries) = obj.get("retries") {
-                        output::writeln(&format!("  Retries:    {}", retries))?;
+                        output::writeln(&format!("  Retries:    {retries}"))?;
                     }
                 }
             }
@@ -490,89 +501,81 @@ async fn inspect_service(client: &DaemonClient, id: &str, format: OutputFormat) 
 
 /// Outputs capabilities in a human-readable format.
 fn output_capabilities(caps: &serde_json::Value) -> Result<()> {
-    let obj = match caps.as_object() {
-        Some(o) => o,
-        None => {
-            output::writeln("  (none)")?;
-            return Ok(());
-        }
+    let Some(obj) = caps.as_object() else {
+        output::writeln("  (none)")?;
+        return Ok(());
     };
 
     let mut has_any = false;
 
     // Environment variables
-    if let Some(env) = obj.get("env") {
-        if let Some(arr) = env.as_array() {
-            if !arr.is_empty() {
-                has_any = true;
-                let vars: Vec<String> = arr
-                    .iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect();
-                output::writeln(&format!("  Environment: {}", vars.join(", ")))?;
-            }
-        }
+    if let Some(env) = obj.get("env")
+        && let Some(arr) = env.as_array()
+        && !arr.is_empty()
+    {
+        has_any = true;
+        let vars: Vec<String> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+        output::writeln(&format!("  Environment: {}", vars.join(", ")))?;
     }
 
     // Network capabilities
-    if let Some(network) = obj.get("network") {
-        if let Some(net_obj) = network.as_object() {
-            // Listen ports
-            if let Some(listen) = net_obj.get("listen") {
-                if let Some(arr) = listen.as_array() {
-                    if !arr.is_empty() {
-                        has_any = true;
-                        let ports: Vec<String> =
-                            arr.iter().filter_map(|v| v.as_u64().map(|p| p.to_string())).collect();
-                        output::writeln(&format!("  Listen:      {}", ports.join(", ")))?;
-                    }
-                }
-            }
-            // Connect hosts
-            if let Some(connect) = net_obj.get("connect") {
-                if let Some(arr) = connect.as_array() {
-                    if !arr.is_empty() {
-                        has_any = true;
-                        let hosts: Vec<String> = arr
-                            .iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect();
-                        output::writeln(&format!("  Connect:     {}", hosts.join(", ")))?;
-                    }
-                }
-            }
+    if let Some(network) = obj.get("network")
+        && let Some(net_obj) = network.as_object()
+    {
+        // Listen ports
+        if let Some(listen) = net_obj.get("listen")
+            && let Some(arr) = listen.as_array()
+            && !arr.is_empty()
+        {
+            has_any = true;
+            let ports: Vec<String> =
+                arr.iter().filter_map(|v| v.as_u64().map(|p| p.to_string())).collect();
+            output::writeln(&format!("  Listen:      {}", ports.join(", ")))?;
+        }
+        // Connect hosts
+        if let Some(connect) = net_obj.get("connect")
+            && let Some(arr) = connect.as_array()
+            && !arr.is_empty()
+        {
+            has_any = true;
+            let hosts: Vec<String> = arr
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+            output::writeln(&format!("  Connect:     {}", hosts.join(", ")))?;
         }
     }
 
     // Filesystem capabilities
-    if let Some(filesystem) = obj.get("filesystem") {
-        if let Some(fs_obj) = filesystem.as_object() {
-            // Read paths
-            if let Some(read) = fs_obj.get("read") {
-                if let Some(arr) = read.as_array() {
-                    if !arr.is_empty() {
-                        has_any = true;
-                        let paths: Vec<String> = arr
-                            .iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect();
-                        output::writeln(&format!("  FS Read:     {}", paths.join(", ")))?;
-                    }
-                }
-            }
-            // Write paths
-            if let Some(write) = fs_obj.get("write") {
-                if let Some(arr) = write.as_array() {
-                    if !arr.is_empty() {
-                        has_any = true;
-                        let paths: Vec<String> = arr
-                            .iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect();
-                        output::writeln(&format!("  FS Write:    {}", paths.join(", ")))?;
-                    }
-                }
-            }
+    if let Some(filesystem) = obj.get("filesystem")
+        && let Some(fs_obj) = filesystem.as_object()
+    {
+        // Read paths
+        if let Some(read) = fs_obj.get("read")
+            && let Some(arr) = read.as_array()
+            && !arr.is_empty()
+        {
+            has_any = true;
+            let paths: Vec<String> = arr
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+            output::writeln(&format!("  FS Read:     {}", paths.join(", ")))?;
+        }
+        // Write paths
+        if let Some(write) = fs_obj.get("write")
+            && let Some(arr) = write.as_array()
+            && !arr.is_empty()
+        {
+            has_any = true;
+            let paths: Vec<String> = arr
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+            output::writeln(&format!("  FS Write:    {}", paths.join(", ")))?;
         }
     }
 
@@ -645,5 +648,39 @@ async fn remove_service(client: &DaemonClient, id: &str, force: bool) -> Result<
 
     client.delete_service(id).await?;
     output::writeln(&format!("Service {id} removed."))?;
+    Ok(())
+}
+
+async fn service_logs(
+    client: &DaemonClient,
+    id: &str,
+    tail: Option<usize>,
+    format: OutputFormat,
+) -> Result<()> {
+    let response = client.get_service_logs(id, tail).await?;
+
+    match format {
+        OutputFormat::Json => {
+            let json = serde_json::to_string_pretty(&response)?;
+            output::writeln(&json)?;
+        }
+        OutputFormat::Text => {
+            if response.entries.is_empty() {
+                output::writeln(&format!("No logs for service {}.", response.id))?;
+            } else {
+                for entry in &response.entries {
+                    let stream_tag = match entry.stream.as_str() {
+                        "stderr" => "[stderr]",
+                        _ => "[stdout]",
+                    };
+                    output::writeln(&format!(
+                        "{} {} {}",
+                        entry.timestamp, stream_tag, entry.message
+                    ))?;
+                }
+            }
+        }
+    }
+
     Ok(())
 }

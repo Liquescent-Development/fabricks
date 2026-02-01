@@ -35,7 +35,7 @@ use fabricksd::shutdown::shutdown_signal;
 use fabricksd::state::AppState;
 
 /// Shutdown timeout in seconds.
-const SHUTDOWN_TIMEOUT_SECS: u64 = 30;
+const SHUTDOWN_TIMEOUT_SECS: u64 = 5;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

@@ -3,6 +3,7 @@
 use axum::{Json, extract::State};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
+use tracing::info;
 
 use crate::api::response::ApiResponse;
 use crate::state::AppState;
@@ -70,6 +71,27 @@ pub async fn daemon_info(State(state): State<AppState>) -> Json<ApiResponse<Daem
     };
 
     Json(ApiResponse::success(info))
+}
+
+/// Shutdown response.
+#[derive(Debug, Serialize)]
+pub struct ShutdownResponse {
+    /// Message confirming shutdown has been initiated.
+    pub message: String,
+}
+
+/// POST `/v1/daemon/shutdown`
+///
+/// Initiates graceful daemon shutdown.
+pub async fn shutdown(State(state): State<AppState>) -> Json<ApiResponse<ShutdownResponse>> {
+    info!("Shutdown requested via API");
+
+    // Send shutdown signal (this is non-blocking)
+    state.shutdown();
+
+    Json(ApiResponse::success(ShutdownResponse {
+        message: "Shutdown initiated".to_string(),
+    }))
 }
 
 /// Formats a duration as a human-readable string.

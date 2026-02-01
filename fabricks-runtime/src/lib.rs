@@ -45,6 +45,7 @@
 pub mod error;
 pub mod http;
 pub mod limits;
+pub mod output;
 pub mod pool;
 pub mod runtime;
 pub mod tcp;
@@ -56,6 +57,7 @@ pub use http::{
     Scheme, WasiHttpState,
 };
 pub use limits::ResourceLimits;
+pub use output::{LogCaptureSink, LogStream, LogWriter};
 pub use pool::{RuntimePool, RuntimePoolBuilder};
 pub use runtime::{Runtime, RuntimeConfig, VolumeMountConfig};
 pub use tcp::{TcpConnection, TcpRuntime, TcpRuntimeConfig};

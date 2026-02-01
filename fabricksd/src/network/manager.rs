@@ -16,6 +16,11 @@ use crate::store::StateStore;
 use super::registry::{SharedServiceRegistry, extract_service_name};
 use super::types::{NetworkConfig, NetworkDetail, NetworkInfo, NetworkState};
 
+/// Name of the default network created at daemon startup.
+///
+/// Services joined to this network allow external (ingress) access.
+pub const DEFAULT_NETWORK_NAME: &str = "default";
+
 /// Network manager for network lifecycle and membership.
 ///
 /// Manages the creation, deletion, and membership of networks.
@@ -365,6 +370,28 @@ impl NetworkManager {
     #[must_use]
     pub fn registry(&self) -> &SharedServiceRegistry {
         &self.registry
+    }
+
+    /// Ensures the default network exists.
+    ///
+    /// Creates a network named "default" with `NetworkAccess::External` if it
+    /// does not already exist. This should be called after `load_state()` during
+    /// daemon initialization.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the network cannot be created.
+    pub async fn ensure_default_network(&self) -> Result<String> {
+        // Check if default network already exists (loaded from persisted state)
+        if let Some(network) = self.get_network_by_name(DEFAULT_NETWORK_NAME).await {
+            info!(id = %network.id, "Default network already exists");
+            return Ok(network.id);
+        }
+
+        let config = NetworkConfig::new(DEFAULT_NETWORK_NAME.to_string());
+        let id = self.create_network(config).await?;
+        info!(id = %id, "Created default network");
+        Ok(id)
     }
 
     /// Loads persisted network state from the state store.

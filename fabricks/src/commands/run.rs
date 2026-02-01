@@ -50,6 +50,7 @@ pub async fn run(args: &RunArgs) -> Result<()> {
             args: args.args.clone(),
             env_vars,
             no_capabilities: args.no_capabilities,
+            networks: Vec::new(),
         })
         .await
         .context("Failed to run via daemon. Is the daemon running? Start it with: fabricksd")?;
