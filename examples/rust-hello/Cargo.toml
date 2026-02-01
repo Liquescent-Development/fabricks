@@ -1,5 +1,5 @@
 [package]
-name = "hello-world"
+name = "rust-hello"
 version = "0.1.0"
 edition = "2024"
 
@@ -21,7 +21,7 @@ pedantic = "allow"
 crate-type = ["cdylib"]
 
 [package.metadata.component]
-package = "component:hello-world"
+package = "component:rust-hello"
 
 [package.metadata.component.target.dependencies]
 "wasi:cli" = "0.2.9"

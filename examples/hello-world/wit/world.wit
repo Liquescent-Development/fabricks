@@ -1,5 +1,0 @@
-package component:hello-world;
-
-world hello-world {
-    include wasi:cli/command@0.2.9;
-}

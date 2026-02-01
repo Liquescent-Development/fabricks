@@ -52,12 +52,12 @@ cargo install cargo-component
 
 ```bash
 # Option A: Deploy from path (builds automatically if needed)
-./target/release/fabricks service run examples/hello-http
+./target/release/fabricks service run examples/rust-http --network default
 
 # Option B: Build first, then run by tag
-./target/release/fabricks build examples/hello-http
+./target/release/fabricks build examples/rust-http
 ./target/release/fabricks images  # List stored modules
-./target/release/fabricks service run hello-http:0.1.0
+./target/release/fabricks service run rust-http:0.1.0 --network default
 ```
 
 **3. Test it:**
@@ -456,7 +456,10 @@ ls docs/
 
 Check out the `/examples` directory for working examples:
 
-- **[hello-http](examples/hello-http/)** - HTTP service using `wasi:http/incoming-handler`
+- **[rust-hello](examples/rust-hello/)** - CLI service using `wasi:cli`
+- **[rust-http](examples/rust-http/)** - HTTP service using `wasi:http/incoming-handler`
+- **[go-hello](examples/go-hello/)** - CLI service built with TinyGo
+- **[go-http](examples/go-http/)** - HTTP service built with TinyGo
 
 See `examples/README.md` for detailed instructions on building and running examples
 

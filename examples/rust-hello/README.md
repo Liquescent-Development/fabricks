@@ -1,17 +1,17 @@
-# Hello World
+# Rust Hello World
 
-The simplest possible Fabricks service - a CLI component that prints a greeting and exits.
+A simple CLI service built with Rust using `wasi:cli/command`.
 
 ## What This Demonstrates
 
 - Basic WASM component structure using `wasi:cli/command`
-- Minimal Fabrickfile configuration
-- How to build a Rust WASM component with `cargo-component`
+- Minimal Fabrickfile configuration with `[from].source = "rust"`
+- Automatic Rust-to-WASM compilation via the RustBuilder
 
 ## Structure
 
 ```
-hello-world/
+rust-hello/
 ├── Fabrickfile       # Service configuration
 ├── Cargo.toml        # Rust project
 ├── wit/
@@ -23,26 +23,20 @@ hello-world/
 
 ## Prerequisites
 
-- [Rust](https://rustup.rs/) (1.91+)
+- [Rust](https://rustup.rs/) (1.80+)
 - [cargo-component](https://github.com/bytecodealliance/cargo-component): `cargo install cargo-component`
-
-## Building
-
-```bash
-cd examples/hello-world
-cargo component build --release
-```
-
-This produces `target/wasm32-wasip1/release/hello_world.wasm`.
 
 ## Running
 
 ```bash
-# Using wasmtime directly
-wasmtime target/wasm32-wasip1/release/hello_world.wasm
+# Start the daemon (if not running)
+fabricksd &
 
-# Or with the Fabricks CLI (once daemon is running)
-fabricks service run examples/hello-world
+# Run the service
+fabricks service run examples/rust-hello
+
+# Check the logs
+fabricks service logs rust-hello
 ```
 
 ## Output
@@ -66,18 +60,21 @@ This service implements the `wasi:cli/run` interface. When executed:
 ## Key Configuration
 
 ```toml
+# Fabrickfile
 [info]
-name = "hello-world"
+name = "rust-hello"
 version = "0.1.0"
-type = "cli"  # CLI type - runs once and exits
+type = "command"
 
-[build]
-command = "cargo component build --release"
-output = "target/wasm32-wasip1/release/hello_world.wasm"
+[from]
+source = "rust"  # Uses RustBuilder - no manual build needed!
+
+[source]
+path = "."
 ```
 
 ## Next Steps
 
-- See [hello-http](../hello-http/) for an HTTP service example
-- See [hello-tcp](../hello-tcp/) for a TCP service example
-- See [multi-service-api](../multi-service-api/) for a multi-service application
+- See [rust-http](../rust-http/) for a Rust HTTP service example
+- See [go-hello](../go-hello/) for a Go CLI example
+- See [go-http](../go-http/) for a Go HTTP service example

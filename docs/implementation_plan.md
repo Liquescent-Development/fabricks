@@ -1497,10 +1497,10 @@ All CLI commands that execute WASM modules go through the daemon. The daemon is 
 
 ### Example Fabrickfile for Testing
 
-Create `examples/hello-world/Fabrickfile`:
+Create `examples/rust-hello/Fabrickfile`:
 ```toml
 [service]
-name = "hello-world"
+name = "rust-hello"
 version = "1.0.0"
 description = "Simple hello world WASM service"
 
@@ -1515,7 +1515,7 @@ engine = "wasmtime"
 # Minimal capabilities for hello world
 ```
 
-Create `examples/hello-world/src/main.rs`:
+Create `examples/rust-hello/src/main.rs`:
 ```rust
 fn main() {
     println!("Hello from Fabricks!");
@@ -1556,7 +1556,7 @@ depends_on = ["api"]
 - [ ] Events published for all service lifecycle changes
 
 #### CLI Commands (End-to-End)
-- [ ] `fabricks run ./examples/hello-world` starts service via daemon
+- [ ] `fabricks run ./examples/rust-hello` starts service via daemon
 - [ ] `fabricks service ls` shows running services
 - [ ] `fabricks service logs <id>` shows service output
 - [ ] `fabricks service stop <id>` stops a service
@@ -1566,7 +1566,7 @@ depends_on = ["api"]
 - [ ] `fabricks mortar down` stops all project services
 
 #### Integration Tests
-- [ ] Build and run hello-world example end-to-end
+- [ ] Build and run rust-hello example end-to-end
 - [ ] Build and run web-app mortar example end-to-end
 - [ ] Service logs are captured and retrievable
 - [ ] Daemon restart preserves service state
@@ -1886,7 +1886,7 @@ The following end-to-end tests MUST pass before Phase 9 is considered complete. 
 
 1. **WASM Test Modules**
    - `hello-cli.wasm` - CLI command that prints to stdout
-   - `hello-http.wasm` - HTTP service implementing `wasi:http/incoming-handler`
+   - `rust-http.wasm` - HTTP service implementing `wasi:http/incoming-handler`
    - `http-client.wasm` - Service that makes outbound HTTP requests
    - `multi-service/` - Mortar project with API + worker + database services
 
